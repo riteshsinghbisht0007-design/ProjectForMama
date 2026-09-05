@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
@@ -76,17 +77,19 @@ class AiOcrService {
     Function(double progress, String status)? onProgress,
   }) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf', 'txt'],
-        withData: true,
-      );
+      final result = await FilePicker.pickFiles(
+        withData : true,
+  // yahan tumhare existing parameters same rahenge
+);
 
-      if (result == null || result.files.isEmpty) {
-        return OcrExtractionResult(success: false, errorMessage: 'File selection cancelled');
-      }
+if (result.isEmpty) {
+  return OcrExtractionResult(
+    success: false,
+    errorMessage: 'File selection cancelled',
+  );
+}
 
-      final file = result.files.first;
+final file = result.first;
 
       return await processDocument(
         fileName: file.name,
@@ -197,3 +200,5 @@ class AiOcrService {
     );
   }
 }
+
+

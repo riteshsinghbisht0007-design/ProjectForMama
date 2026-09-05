@@ -45,7 +45,7 @@ class SummonDetailDialog extends StatelessWidget {
                         ),
                         child: Text(
                           urgency.label,
-                          style: GoogleFonts.jetbrainsMono(
+                          style: GoogleFonts.jetBrainsMono(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                             color: urgency.onContainerColor,
@@ -55,7 +55,7 @@ class SummonDetailDialog extends StatelessWidget {
                       const SizedBox(width: 8),
                       Text(
                         summon.firNumber,
-                        style: GoogleFonts.jetbrainsMono(
+                        style: GoogleFonts.jetBrainsMono(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: AppColors.onSurfaceVariant,
@@ -122,7 +122,7 @@ class SummonDetailDialog extends StatelessWidget {
               // Operational Notes
               Text(
                 'OPERATIONAL NOTES & INSTRUCTIONS',
-                style: GoogleFonts.jetbrainsMono(
+                style: GoogleFonts.jetBrainsMono(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: AppColors.onSurfaceVariant,

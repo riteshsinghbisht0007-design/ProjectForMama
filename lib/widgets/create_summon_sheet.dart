@@ -484,7 +484,7 @@ class _CreateSummonSheetState extends State<CreateSummonSheet> {
                                         value: u,
                                         child: Text(
                                           u.label,
-                                          style: GoogleFonts.jetbrainsMono(
+                                          style: GoogleFonts.jetBrainsMono(
                                             fontSize: 11,
                                             fontWeight: FontWeight.w600,
                                             color: u.color,
@@ -546,7 +546,7 @@ class _CreateSummonSheetState extends State<CreateSummonSheet> {
                                       const SizedBox(width: 8),
                                       Text(
                                         DateFormat('dd MMM yyyy').format(_hearingDate),
-                                        style: GoogleFonts.jetbrainsMono(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.onSurface),
+                                        style: GoogleFonts.jetBrainsMono(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.onSurface),
                                       ),
                                     ],
                                   ),
@@ -583,7 +583,7 @@ class _CreateSummonSheetState extends State<CreateSummonSheet> {
                                       const SizedBox(width: 8),
                                       Text(
                                         _timeController.text,
-                                        style: GoogleFonts.jetbrainsMono(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.onSurface),
+                                        style: GoogleFonts.jetBrainsMono(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.onSurface),
                                       ),
                                     ],
                                   ),
@@ -767,7 +767,7 @@ class _CreateSummonSheetState extends State<CreateSummonSheet> {
           maxLines: maxLines,
           validator: validator,
           style: isMono
-              ? GoogleFonts.jetbrainsMono(fontSize: 13, color: AppColors.onSurface)
+              ? GoogleFonts.jetBrainsMono(fontSize: 13, color: AppColors.onSurface)
               : GoogleFonts.inter(fontSize: 13, color: AppColors.onSurface),
           decoration: InputDecoration(
             isDense: true,

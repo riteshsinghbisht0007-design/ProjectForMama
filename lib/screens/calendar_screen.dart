@@ -109,7 +109,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       child: Text(
                         day,
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.jetbrainsMono(
+                        style: GoogleFonts.jetBrainsMono(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textMuted,
@@ -174,7 +174,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           children: [
                             Text(
                               '${date.day}',
-                              style: GoogleFonts.jetbrainsMono(
+                              style: GoogleFonts.jetBrainsMono(
                                 fontSize: 13,
                                 fontWeight: isSelected || isToday ? FontWeight.w700 : FontWeight.w500,
                                 color: isSelected
@@ -227,7 +227,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 ),
                 child: Text(
                   '${selectedDaySummons.length} HEARINGS',
-                  style: GoogleFonts.jetbrainsMono(
+                  style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                     color: AppColors.primary,
