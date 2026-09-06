@@ -1,0 +1,6 @@
+{
+  "name": "SummonMitra",
+  "description": "Smart Summon Management Assistant for law enforcement officers to track, schedule, and process judicial warrants and court appearances.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
