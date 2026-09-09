@@ -1,3 +1,10 @@
+# Node / Web Build
+node_modules/
+dist/
+.env
+.env.local
+package-lock.json
+
 # Miscellaneous
 *.class
 *.log

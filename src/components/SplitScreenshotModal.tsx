@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { X, Download, Share2, Copy, Check, Loader2, FileImage } from 'lucide-react';
+import { X, Download, Share2, Copy, Check, Loader2, FileImage, FileText } from 'lucide-react';
 import { Summon } from '../types';
 import {
   generateSplitSummonCanvas,
   shareSummonNative,
   generateFormattedForwardText,
 } from '../utils/shareService';
+import { downloadSummonNoticePDF } from '../utils/pdfService';
+import { useToast } from './Toast';
 
 interface SplitScreenshotModalProps {
   summon: Summon | null;
@@ -16,8 +18,10 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
   summon,
   onClose,
 }) => {
+  const { addToast } = useToast();
   const [splitImageUrl, setSplitImageUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(true);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [sharing, setSharing] = useState<boolean>(false);
 
@@ -57,6 +61,20 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    addToast('Summon composite image downloaded.', 'success');
+  };
+
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      const filename = await downloadSummonNoticePDF(summon);
+      addToast(`Official PDF saved: ${filename}`, 'success');
+    } catch (err: any) {
+      console.error('PDF generation error:', err);
+      addToast('Failed to generate PDF legal notice. Please try again.', 'error');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const handleShare = async () => {
@@ -74,6 +92,7 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
+      addToast('Formatted dispatch text copied to clipboard.', 'info');
       setTimeout(() => setCopied(false), 2500);
     } catch {
       // Fallback
@@ -150,24 +169,34 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="bg-[#0A192F] border-t border-[#222A3D] px-6 py-4 flex items-center justify-between gap-3">
+        <div className="bg-[#0A192F] border-t border-[#222A3D] px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="text-xs text-[#8F9097]">
             Summon Ref: <span className="font-mono text-white">{summon.summonNumber}</span>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleCopyText}
-              className="px-4 py-2 rounded-xl border border-[#222A3D] hover:bg-[#1E293B] text-xs font-medium text-[#DAE2FD] flex items-center gap-1.5 transition-colors"
+              className="px-3.5 py-2 rounded-xl border border-[#222A3D] hover:bg-[#1E293B] text-xs font-medium text-[#DAE2FD] flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied' : 'Copy Text'}
             </button>
 
             <button
+              onClick={handleDownloadPdf}
+              disabled={isGeneratingPdf}
+              id="download-pdf-modal-btn"
+              className="px-3.5 py-2 rounded-xl bg-[#222A3D] hover:bg-[#2F4A70] text-[#ADC8F5] hover:text-white text-xs font-bold flex items-center gap-1.5 border border-[#39475F] transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-[#FFB77D]" /> : <FileText className="w-4 h-4 text-[#FFB77D]" />}
+              <span>Download PDF</span>
+            </button>
+
+            <button
               onClick={handleDownload}
               disabled={!splitImageUrl || isGenerating}
-              className="px-4 py-2 rounded-xl bg-[#1E3A5F] hover:bg-[#2F4A70] text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              className="px-3.5 py-2 rounded-xl bg-[#1E3A5F] hover:bg-[#2F4A70] text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Download className="w-4 h-4" /> Download Image
             </button>
@@ -175,7 +204,7 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
             <button
               onClick={handleShare}
               disabled={!splitImageUrl || isGenerating || sharing}
-              className="px-5 py-2 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg transition-colors disabled:opacity-50"
+              className="px-4 py-2 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Share2 className="w-4 h-4" /> Forward & Share
             </button>

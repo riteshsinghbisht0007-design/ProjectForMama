@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   User,
@@ -34,27 +34,44 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const [rank, setRank] = useState(currentUser?.rank || '');
   const [photoURL, setPhotoURL] = useState(currentUser?.photoURL || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (currentUser) {
+      setDisplayName(currentUser.displayName || '');
+      setBadgeNumber(currentUser.badgeNumber || '');
+      setPoliceStation(currentUser.policeStation || '');
+      setDistrict(currentUser.district || '');
+      setRank(currentUser.rank || '');
+      setPhotoURL(currentUser.photoURL || '');
+    }
+  }, [currentUser]);
 
   if (!isOpen || !currentUser) return null;
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateOfficerProfile({
-      displayName,
-      badgeNumber,
-      policeStation,
-      district,
-      rank,
-      photoURL,
-    });
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
+    setIsSaving(true);
+    try {
+      await updateOfficerProfile({
+        displayName,
+        badgeNumber,
+        policeStation,
+        district,
+        rank,
+        photoURL,
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2500);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (confirm('Are you sure you want to log out of the police summon portal?')) {
       onClose();
-      logout();
+      await logout();
     }
   };
 

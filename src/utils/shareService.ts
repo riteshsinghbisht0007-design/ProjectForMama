@@ -1,4 +1,53 @@
-import { Summon } from '../types';
+import { Summon, WitnessPerson } from '../types';
+
+export const generateWitnessForwardText = (witness: WitnessPerson, summon?: Summon | null): string => {
+  return `🏛️ DELHI POLICE — OFFICIAL WITNESS / SERVICE DISPATCH
+[JUDICIAL PROCESS SERVING UNIT • ${witness.policeStation?.toUpperCase() || 'DELHI'}]
+
+👤 WITNESS / PERSON PARTICULARS:
+• Full Name: ${witness.name}
+${witness.fatherName ? `• Relative / Father's Name: ${witness.fatherName}\n` : ''}• Role in Proceedings: ${witness.role.toUpperCase()}
+• Contact Phone: ${witness.phone || 'Not Provided'}
+${witness.idProofNumber ? `• Identity Proof: ${witness.idProofType || 'Govt ID'} (${witness.idProofNumber})\n` : ''}
+📍 RESIDENTIAL / SERVING ADDRESS:
+${witness.address}
+Jurisdiction: ${witness.policeStation}, ${witness.district}${witness.state ? `, ${witness.state}` : ''}
+
+${summon ? `📋 ASSOCIATED CASE / SUMMON:
+• Case / FIR No: ${summon.caseNumber}
+• Summon Ref: ${summon.summonNumber}
+• Court / Bench: ${summon.courtName}
+• Scheduled Hearing: ${summon.hearingDate}
+` : witness.summonCaseNo ? `📋 LINKED CASE REF: ${witness.summonCaseNo}\n` : ''}
+${witness.statementSummary ? `📝 STATEMENT / WITNESS REMARKS:\n"${witness.statementSummary}"\n` : ''}
+⚠️ Verified by Delhi Police Summon Mitra System
+Generated on: ${new Date().toLocaleDateString('en-IN')}`;
+};
+
+export const shareWitnessNative = async (witness: WitnessPerson, summon?: Summon | null): Promise<boolean> => {
+  const text = generateWitnessForwardText(witness, summon);
+
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: `Witness Record - ${witness.name} (${witness.role})`,
+        text,
+      });
+      return true;
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.warn('Native share error:', err);
+      }
+    }
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export const generateFormattedForwardText = (summon: Summon): string => {
   return `🏛️ OFFICIAL JUDICIAL SUMMON NOTICE 🏛️

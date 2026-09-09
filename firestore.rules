@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profile: only the authenticated user can read or write their profile
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Summons subcollection: strictly isolated to the owning officer
+      match /summons/{summonId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Witnesses and persons directory subcollection: isolated to the owning officer
+      match /witnesses/{witnessId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}

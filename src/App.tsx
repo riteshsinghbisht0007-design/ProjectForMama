@@ -10,6 +10,7 @@ import {
   ArrowUpDown,
   Sparkles,
   Shield,
+  Users,
 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import { useSummons } from './context/SummonContext';
@@ -24,6 +25,8 @@ import { HearingCalendarView } from './components/HearingCalendarView';
 import { OfficerProfileModal } from './components/OfficerProfileModal';
 import { UrgentAlertsModal } from './components/UrgentAlertsModal';
 import { AuthScreen } from './components/AuthScreen';
+import { WelcomeAnimation } from './components/WelcomeAnimation';
+import { WitnessDirectoryModal } from './components/WitnessDirectoryModal';
 
 export function App() {
   const { currentUser } = useAuth();
@@ -45,6 +48,12 @@ export function App() {
   const [splitSummon, setSplitSummon] = useState<Summon | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isAlertsOpen, setIsAlertsOpen] = useState(false);
+  const [isWitnessDirOpen, setIsWitnessDirOpen] = useState(false);
+
+  // Special Mac-inspired Welcome animation state
+  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
+    return !sessionStorage.getItem('summonsmitra_welcomed');
+  });
 
   // Filtered & Sorted Summons
   const filteredSummons = useMemo(() => {
@@ -57,12 +66,12 @@ export function App() {
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
           const match =
-            s.summonNumber.toLowerCase().includes(q) ||
-            s.caseNumber.toLowerCase().includes(q) ||
-            s.personName.toLowerCase().includes(q) ||
-            s.address.toLowerCase().includes(q) ||
-            s.courtName.toLowerCase().includes(q) ||
-            s.policeStation.toLowerCase().includes(q);
+            (s.summonNumber || '').toLowerCase().includes(q) ||
+            (s.caseNumber || '').toLowerCase().includes(q) ||
+            (s.personName || '').toLowerCase().includes(q) ||
+            (s.address || '').toLowerCase().includes(q) ||
+            (s.courtName || '').toLowerCase().includes(q) ||
+            (s.policeStation || '').toLowerCase().includes(q);
           if (!match) return false;
         }
 
@@ -70,12 +79,12 @@ export function App() {
       })
       .sort((a, b) => {
         if (sortBy === 'hearingDate') {
-          const timeA = new Date(a.hearingDate).getTime();
-          const timeB = new Date(b.hearingDate).getTime();
+          const timeA = a.hearingDate ? new Date(a.hearingDate).getTime() : 0;
+          const timeB = b.hearingDate ? new Date(b.hearingDate).getTime() : 0;
           return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
         } else {
-          const timeA = new Date(a.createdAt).getTime();
-          const timeB = new Date(b.createdAt).getTime();
+          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
           return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
         }
       });
@@ -84,7 +93,7 @@ export function App() {
   // Urgent hearings count
   const today = new Date().toISOString().split('T')[0];
   const urgentCount = summons.filter((s) => {
-    if (s.status === 'Completed') return false;
+    if (s.status === 'Completed' || !s.hearingDate) return false;
     const diff = Math.ceil(
       (new Date(s.hearingDate).getTime() - new Date(today).getTime()) / (1000 * 3600 * 24)
     );

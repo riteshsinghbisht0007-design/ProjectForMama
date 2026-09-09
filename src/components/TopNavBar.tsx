@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Bell, User, Clock, CheckCircle2 } from 'lucide-react';
+import { Shield, Bell, User, Clock, CheckCircle2, Users } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSummons } from '../context/SummonContext';
 
 interface TopNavBarProps {
   onOpenProfile: () => void;
   onOpenAlerts: () => void;
+  onOpenWitnessDirectory?: () => void;
 }
 
-export const TopNavBar: React.FC<TopNavBarProps> = ({ onOpenProfile, onOpenAlerts }) => {
+export const TopNavBar: React.FC<TopNavBarProps> = ({
+  onOpenProfile,
+  onOpenAlerts,
+  onOpenWitnessDirectory,
+}) => {
   const { currentUser } = useAuth();
   const { summons } = useSummons();
   const [timeStr, setTimeStr] = useState('');
@@ -83,6 +88,18 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({ onOpenProfile, onOpenAlert
                 Badge #{currentUser.badgeNumber}
               </span>
             </div>
+          )}
+
+          {/* Witness & Person Directory */}
+          {onOpenWitnessDirectory && (
+            <button
+              onClick={onOpenWitnessDirectory}
+              id="witness-directory-btn"
+              title="Witness & People Directory"
+              className="p-2 rounded-lg bg-[#131B2E] border border-[#222A3D] hover:bg-[#1E293B] text-[#ADC8F5] hover:text-white transition-colors cursor-pointer"
+            >
+              <Users className="w-4 h-4" />
+            </button>
           )}
 
           {/* Urgent Alerts Bell */}

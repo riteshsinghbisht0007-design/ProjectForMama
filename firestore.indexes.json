@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "summons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "hearingDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "summons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

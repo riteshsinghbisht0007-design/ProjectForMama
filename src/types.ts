@@ -1,6 +1,36 @@
 export type SummonStatus = 'Pending' | 'Upcoming' | 'Completed';
 export type SummonUrgency = 'Standard' | 'High' | 'Urgent';
 
+export type WitnessRole =
+  | 'Witness'
+  | 'Accused'
+  | 'Complainant'
+  | 'Surety'
+  | 'Neighbor/Independent Witness'
+  | 'Respondent';
+
+export interface WitnessPerson {
+  id: string;
+  userId: string;
+  name: string;
+  fatherName?: string;
+  role: WitnessRole;
+  phone?: string;
+  email?: string;
+  address: string;
+  policeStation: string;
+  district: string;
+  state?: string;
+  summonId?: string;
+  summonCaseNo?: string;
+  statementSummary?: string;
+  idProofType?: string;
+  idProofNumber?: string;
+  photoUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Summon {
   id: string;
   userId: string;
@@ -27,6 +57,8 @@ export interface Summon {
   servedDate?: string;
   servedNotes?: string;
   reminderEnabled?: boolean;
+  witnesses?: WitnessPerson[];
+  linkedWitnessIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
