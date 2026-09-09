@@ -13,6 +13,7 @@ export interface ToastMessage {
 interface ToastContextType {
   toasts: ToastMessage[];
   showToast: (message: string, type?: ToastType, title?: string) => void;
+  addToast: (message: string, type?: ToastType, title?: string) => void;
   removeToast: (id: string) => void;
 }
 
@@ -39,7 +40,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   return (
-    <ToastContext.Provider value={{ toasts, showToast, removeToast }}>
+    <ToastContext.Provider value={{ toasts, showToast, addToast: showToast, removeToast }}>
       {children}
       {/* Toast Notification HUD */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none p-2">

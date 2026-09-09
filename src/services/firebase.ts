@@ -38,7 +38,7 @@ import {
 
 // Official project configuration for summonsviewer (Project # 978347682385)
 const defaultFirebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyDcqz3ITuQx9-E2J-jxwABcFjCnkKWvaxU',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-api-key',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'summonsviewer.firebaseapp.com',
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'summonsviewer',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'summonsviewer.firebasestorage.app',

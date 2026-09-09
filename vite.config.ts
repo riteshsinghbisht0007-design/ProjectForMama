@@ -133,6 +133,7 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
     server: {
       host: '0.0.0.0',
       port: 3000,
+      allowedHosts: true,
     },
   };
 });
