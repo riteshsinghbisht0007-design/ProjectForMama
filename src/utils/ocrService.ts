@@ -157,17 +157,127 @@ export const parseSummonTextStrict = (rawText: string): ExtractedSummonData => {
   };
 };
 
-// Main AI Document OCR Scanner
+// Helper to optimize large mobile images (downscaling 10-25MB photos to fast, sharp 2048px scans)
+export const optimizeImageForOcr = async (
+  dataUrl: string,
+  mimeType: string,
+  maxDimension = 2048,
+  quality = 0.85
+): Promise<{ dataUrl: string; mimeType: string }> => {
+  if (mimeType.includes('pdf') || !dataUrl.startsWith('data:image')) {
+    return { dataUrl, mimeType };
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width <= maxDimension && height <= maxDimension) {
+        resolve({ dataUrl, mimeType });
+        return;
+      }
+
+      if (width > height) {
+        if (width > maxDimension) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        }
+      } else {
+        if (height > maxDimension) {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve({ dataUrl, mimeType });
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0, width, height);
+      const optimizedUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve({ dataUrl: optimizedUrl, mimeType: 'image/jpeg' });
+    };
+
+    img.onerror = () => {
+      resolve({ dataUrl, mimeType });
+    };
+
+    img.src = dataUrl;
+  });
+};
+
+// Inspect OCR Health status on backend
+export const inspectOcrHealth = async (): Promise<{
+  isOnline: boolean;
+  configured: boolean;
+  message: string;
+}> => {
+  try {
+    const res = await fetch('/api/ocr/health', { method: 'GET' });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        isOnline: true,
+        configured: Boolean(data.configured),
+        message: data.configured
+          ? 'AI Legal OCR engine is online and active.'
+          : 'AI OCR server is reachable but GEMINI_API_KEY is pending configuration in environment.',
+      };
+    }
+    return {
+      isOnline: false,
+      configured: false,
+      message: `Health check responded with HTTP ${res.status}`,
+    };
+  } catch (err: any) {
+    return {
+      isOnline: false,
+      configured: false,
+      message: err.message || 'OCR server health check unreachable',
+    };
+  }
+};
+
+// Main AI Document OCR Scanner with real error reporting and timeout protection
 export const scanSummonDocument = async (
   base64Data: string,
   mimeType: string
 ): Promise<OcrResult> => {
+  const startTime = Date.now();
+  console.info(`[OCR Client] Initiating document scan (${mimeType})...`);
+
+  // Optimize high-resolution mobile camera captures before transmission
+  let payloadDataUrl = base64Data;
+  let payloadMime = mimeType;
+  try {
+    const optimized = await optimizeImageForOcr(base64Data, mimeType);
+    payloadDataUrl = optimized.dataUrl;
+    payloadMime = optimized.mimeType;
+  } catch (optErr) {
+    console.warn('[OCR Client] Image optimization skipped:', optErr);
+  }
+
+  // 45-second timeout controller for mobile cellular network resilience
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+
   try {
     const res = await fetch('/api/ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64Data, mimeType }),
+      body: JSON.stringify({ image: payloadDataUrl, mimeType: payloadMime }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
+
+    console.info(`[OCR Client] Received response: HTTP ${res.status} in ${Date.now() - startTime}ms`);
 
     if (res.ok) {
       const data = await res.json();
@@ -211,30 +321,60 @@ export const scanSummonDocument = async (
           },
         };
       } else if (data && data.rawText) {
-        // If raw OCR text was returned without JSON formatting
+        // If raw text was returned
         const parsed = parseSummonTextStrict(data.rawText);
         return {
           success: true,
           isAutofilled: (parsed.detectedFields?.length || 0) > 0,
-          message: 'Extracted particulars from raw OCR document text.',
+          message: 'Extracted particulars from document text analysis.',
           data: parsed,
         };
       }
     } else {
       const errJson = await res.json().catch(() => ({}));
+      console.error(`[OCR Client] Server error HTTP ${res.status}:`, errJson);
+
+      let errorMessage = errJson.error;
+      if (!errorMessage) {
+        if (res.status === 401 || res.status === 403) {
+          errorMessage = 'Authentication issue: Gemini API key unauthorized or expired on server.';
+        } else if (res.status === 404) {
+          errorMessage = 'OCR API endpoint was not found (/api/ocr). Please verify server deployment.';
+        } else if (res.status === 413) {
+          errorMessage = 'Document image is too large for upload. Please capture or select a lower resolution image.';
+        } else if (res.status === 429) {
+          errorMessage = 'AI service rate limit reached. Please wait a moment and retry.';
+        } else if (res.status === 503) {
+          errorMessage = errJson.error || 'AI OCR service is temporarily unavailable or GEMINI_API_KEY is missing.';
+        } else {
+          errorMessage = `AI OCR server returned status ${res.status}. Please check document details manually.`;
+        }
+      }
+
       return {
         success: false,
         isAutofilled: false,
-        message: errJson.error || 'AI OCR service response was not valid. Please review document details manually.',
+        message: errorMessage,
         data: parseSummonTextStrict(''),
       };
     }
   } catch (err: any) {
-    console.warn('Backend OCR call failed:', err);
+    clearTimeout(timeoutId);
+    console.error('[OCR Client] Fetch error:', err);
+
+    let failMessage = 'Document OCR scan failed.';
+    if (err.name === 'AbortError') {
+      failMessage = 'Document OCR timed out after 45 seconds. Please enter details manually.';
+    } else if (err.message && err.message.includes('Failed to fetch')) {
+      failMessage = `Could not connect to OCR server at ${window.location.origin}/api/ocr. Server may still be starting.`;
+    } else {
+      failMessage = err.message || 'OCR scanner encounter an unexpected error.';
+    }
+
     return {
       success: false,
       isAutofilled: false,
-      message: 'Document OCR scanner is unreachable or offline. Please enter summon details manually.',
+      message: failMessage,
       data: parseSummonTextStrict(''),
     };
   }

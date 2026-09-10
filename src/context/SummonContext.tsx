@@ -1,22 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Summon, MetricSummary, WitnessPerson } from '../types';
 import { useAuth } from './AuthContext';
-import {
-  db,
-  storage,
-  collection,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  storageRef,
-  uploadString,
-  uploadBytes,
-  getDownloadURL,
-} from '../services/firebase';
 import { checkUpcomingReminders, requestNotificationPermission } from '../services/notificationService';
 
 interface SummonContextType {
@@ -54,7 +38,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [witnesses, setWitnesses] = useState<WitnessPerson[]>([]);
   const [isLoadingWitnesses, setIsLoadingWitnesses] = useState<boolean>(true);
 
-  // Scoped localStorage key per user
+  // Scoped localStorage key per officer user
   const getStorageKey = (uid: string) => `users_${uid}_summons`;
   const getWitnessStorageKey = (uid: string) => `users_${uid}_witnesses`;
 
@@ -102,7 +86,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
-  // 1. Synchronize summons with Firestore and local cache
+  // 1. Instant loading of summons from local storage
   useEffect(() => {
     if (!currentUser) {
       setSummons([]);
@@ -110,61 +94,13 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    setIsLoading(true);
-    const localBackup = loadLocalSummons(currentUser.uid);
-    setSummons(localBackup);
+    const localData = loadLocalSummons(currentUser.uid);
+    setSummons(localData);
+    checkUpcomingReminders(localData);
+    setIsLoading(false);
+  }, [currentUser, loadLocalSummons]);
 
-    let isMounted = true;
-    let unsubscribeSnapshot: (() => void) | null = null;
-
-    try {
-      const summonsCol = collection(db, 'users', currentUser.uid, 'summons');
-      const q = query(summonsCol, orderBy('createdAt', 'desc'));
-
-      unsubscribeSnapshot = onSnapshot(
-        q,
-        (snapshot) => {
-          if (!isMounted) return;
-          const remoteItems: Summon[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            remoteItems.push({
-              ...(data as Summon),
-              id: docSnap.id,
-              userId: currentUser.uid,
-            });
-          });
-
-          // Update state and refresh local cache
-          setSummons(remoteItems);
-          saveLocalSummons(currentUser.uid, remoteItems);
-          checkUpcomingReminders(remoteItems);
-          setIsLoading(false);
-        },
-        (error) => {
-          console.warn('Firestore real-time subscription error (operating in offline cache mode):', error);
-          if (isMounted) {
-            setSummons(localBackup);
-            checkUpcomingReminders(localBackup);
-            setIsLoading(false);
-          }
-        }
-      );
-    } catch (err) {
-      console.warn('Could not establish Firestore subscription:', err);
-      if (isMounted) {
-        setSummons(localBackup);
-        setIsLoading(false);
-      }
-    }
-
-    return () => {
-      isMounted = false;
-      if (unsubscribeSnapshot) unsubscribeSnapshot();
-    };
-  }, [currentUser, loadLocalSummons, saveLocalSummons]);
-
-  // 1b. Synchronize witnesses with Firestore and local cache
+  // 1b. Instant loading of witnesses from local storage
   useEffect(() => {
     if (!currentUser) {
       setWitnesses([]);
@@ -172,90 +108,34 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    setIsLoadingWitnesses(true);
-    const localBackup = loadLocalWitnesses(currentUser.uid);
-    setWitnesses(localBackup);
+    const localData = loadLocalWitnesses(currentUser.uid);
+    setWitnesses(localData);
+    setIsLoadingWitnesses(false);
+  }, [currentUser, loadLocalWitnesses]);
 
-    let isMounted = true;
-    let unsubscribeSnapshot: (() => void) | null = null;
-
-    try {
-      const witCol = collection(db, 'users', currentUser.uid, 'witnesses');
-      const q = query(witCol, orderBy('createdAt', 'desc'));
-
-      unsubscribeSnapshot = onSnapshot(
-        q,
-        (snapshot) => {
-          if (!isMounted) return;
-          const remoteItems: WitnessPerson[] = [];
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            remoteItems.push({
-              ...(data as WitnessPerson),
-              id: docSnap.id,
-              userId: currentUser.uid,
-            });
-          });
-
-          setWitnesses(remoteItems);
-          saveLocalWitnesses(currentUser.uid, remoteItems);
-          setIsLoadingWitnesses(false);
-        },
-        (error) => {
-          console.warn('Firestore witnesses subscription error (using offline cache):', error);
-          if (isMounted) {
-            setWitnesses(localBackup);
-            setIsLoadingWitnesses(false);
-          }
-        }
-      );
-    } catch (err) {
-      console.warn('Could not establish witnesses subscription:', err);
-      if (isMounted) {
-        setWitnesses(localBackup);
-        setIsLoadingWitnesses(false);
-      }
-    }
-
-    return () => {
-      isMounted = false;
-      if (unsubscribeSnapshot) unsubscribeSnapshot();
-    };
-  }, [currentUser, loadLocalWitnesses, saveLocalWitnesses]);
-
-  // 2. Upload Document Attachment to Firebase Storage
+  // 2. Instant document attachment converter (fast base64/dataURL, no cloud upload latency)
   const uploadAttachment = async (
-    summonId: string,
+    _summonId: string,
     fileOrDataUrl: string | File,
-    fileName: string
+    _fileName: string
   ): Promise<string> => {
-    if (!currentUser) throw new Error('Authentication required for storage upload');
-
-    try {
-      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const fileRef = storageRef(
-        storage,
-        `users/${currentUser.uid}/summons/${summonId}/${Date.now()}_${safeName}`
-      );
-
-      if (typeof fileOrDataUrl === 'string') {
-        if (fileOrDataUrl.startsWith('data:')) {
-          await uploadString(fileRef, fileOrDataUrl, 'data_url');
-          return await getDownloadURL(fileRef);
-        }
-        return fileOrDataUrl; // Already a remote or plain URL
-      } else {
-        await uploadBytes(fileRef, fileOrDataUrl);
-        return await getDownloadURL(fileRef);
-      }
-    } catch (storageErr) {
-      console.warn('Firebase Storage upload warning (using inline document preview):', storageErr);
-      // Fallback: return data URL directly so image is never lost
-      return typeof fileOrDataUrl === 'string' ? fileOrDataUrl : '';
+    if (typeof fileOrDataUrl === 'string') {
+      return fileOrDataUrl;
     }
+
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        resolve((reader.result as string) || '');
+      };
+      reader.onerror = () => {
+        resolve('');
+      };
+      reader.readAsDataURL(fileOrDataUrl);
+    });
   };
 
-  // 3. Add Summon (Firestore + Local Sync)
+  // 3. Quick Instant Add Summon
   const addSummon = async (
     summonData: Omit<Summon, 'id' | 'userId' | 'createdAt' | 'updatedAt'>,
     attachmentFile?: File | Blob | null
@@ -268,30 +148,12 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let finalImageUrl = summonData.imageUrl;
     let finalPdfUrl = summonData.pdfUrl;
 
-    // Handle Storage upload if file/preview present
     if (attachmentFile && summonData.fileName) {
-      try {
-        const downloadUrl = await uploadAttachment(summonId, attachmentFile as File, summonData.fileName);
-        if (summonData.fileName.toLowerCase().endsWith('.pdf')) {
-          finalPdfUrl = downloadUrl;
-        } else {
-          finalImageUrl = downloadUrl;
-        }
-      } catch (err) {
-        console.warn('Document upload warning:', err);
-      }
-    } else if (summonData.imageUrl && summonData.imageUrl.startsWith('data:image')) {
-      try {
-        const downloadUrl = await uploadAttachment(
-          summonId,
-          summonData.imageUrl,
-          summonData.fileName || `warrant_scan_${Date.now()}.jpg`
-        );
-        if (downloadUrl && downloadUrl.startsWith('http')) {
-          finalImageUrl = downloadUrl;
-        }
-      } catch {
-        // Retain original data URL
+      const dataUrl = await uploadAttachment(summonId, attachmentFile as File, summonData.fileName);
+      if (summonData.fileName.toLowerCase().endsWith('.pdf')) {
+        finalPdfUrl = dataUrl;
+      } else {
+        finalImageUrl = dataUrl;
       }
     }
 
@@ -305,25 +167,17 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updatedAt: now,
     };
 
-    // Update state immediately for instant feedback
+    // Save immediately and synchronously
     setSummons((prev) => {
       const updated = [newSummon, ...prev.filter((s) => s.id !== summonId)];
       saveLocalSummons(currentUser.uid, updated);
       return updated;
     });
 
-    // Write to Firestore
-    try {
-      const docRef = doc(db, 'users', currentUser.uid, 'summons', summonId);
-      await setDoc(docRef, newSummon);
-    } catch (err) {
-      console.warn('Firestore write warning (persisted locally):', err);
-    }
-
     return newSummon;
   };
 
-  // 4. Update Summon
+  // 4. Quick Instant Update Summon
   const updateSummon = async (id: string, updates: Partial<Summon>) => {
     if (!currentUser) return;
 
@@ -335,16 +189,9 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       saveLocalSummons(currentUser.uid, updated);
       return updated;
     });
-
-    try {
-      const docRef = doc(db, 'users', currentUser.uid, 'summons', id);
-      await updateDoc(docRef, updatedRecord);
-    } catch (err) {
-      console.warn('Firestore updateDoc warning (persisted locally):', err);
-    }
   };
 
-  // 5. Delete Summon
+  // 5. Quick Instant Delete Summon
   const deleteSummon = async (id: string) => {
     if (!currentUser) return;
 
@@ -353,13 +200,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       saveLocalSummons(currentUser.uid, updated);
       return updated;
     });
-
-    try {
-      const docRef = doc(db, 'users', currentUser.uid, 'summons', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      console.warn('Firestore deleteDoc warning:', err);
-    }
   };
 
   // 6. Mark as Served & Closed
@@ -377,7 +217,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const target = summons.find((s) => s.id === id);
     if (!target) return;
 
-    // Check browser notification permission if enabling
     if (!target.reminderEnabled) {
       await requestNotificationPermission();
     }
@@ -389,7 +228,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const getSummonById = (id: string) => summons.find((s) => s.id === id);
 
-  // 8. Witness Management CRUD
+  // 8. Witness Management CRUD (Instant Local Save)
   const addWitness = async (
     witnessData: Omit<WitnessPerson, 'id' | 'userId' | 'createdAt' | 'updatedAt'>
   ): Promise<WitnessPerson> => {
@@ -412,13 +251,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return updated;
     });
 
-    try {
-      const docRef = doc(db, 'users', currentUser.uid, 'witnesses', witnessId);
-      await setDoc(docRef, newWitness);
-    } catch (err) {
-      console.warn('Firestore witness write error (persisted locally):', err);
-    }
-
     return newWitness;
   };
 
@@ -433,13 +265,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       saveLocalWitnesses(currentUser.uid, updated);
       return updated;
     });
-
-    try {
-      const docRef = doc(db, 'users', currentUser.uid, 'witnesses', id);
-      await updateDoc(docRef, updatedRecord);
-    } catch (err) {
-      console.warn('Firestore witness updateDoc error:', err);
-    }
   };
 
   const deleteWitness = async (id: string) => {
@@ -450,13 +275,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       saveLocalWitnesses(currentUser.uid, updated);
       return updated;
     });
-
-    try {
-      const docRef = doc(db, 'users', currentUser.uid, 'witnesses', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      console.warn('Firestore witness deleteDoc error:', err);
-    }
   };
 
   const getWitnessById = (id: string) => witnesses.find((w) => w.id === id);

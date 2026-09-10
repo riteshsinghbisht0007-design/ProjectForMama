@@ -47,6 +47,14 @@ const defaultFirebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-VZS85H401S',
 };
 
+// Check if a live, valid Firebase API key has been supplied
+export const isFirebaseConfigured = Boolean(
+  import.meta.env.VITE_FIREBASE_API_KEY &&
+  import.meta.env.VITE_FIREBASE_API_KEY !== 'demo-api-key' &&
+  !import.meta.env.VITE_FIREBASE_API_KEY.includes('Dummy') &&
+  import.meta.env.VITE_FIREBASE_API_KEY.length > 20
+);
+
 // Initialize or reuse Firebase App instance
 const app = getApps().length > 0 ? getApp() : initializeApp(defaultFirebaseConfig);
 

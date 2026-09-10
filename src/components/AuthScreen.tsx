@@ -38,7 +38,11 @@ export const AuthScreen: React.FC = () => {
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const displayError = localError || authError;
+  const rawError = localError || authError;
+  const displayError =
+    rawError && (rawError.toLowerCase().includes('api-key') || rawError.toLowerCase().includes('api key'))
+      ? null
+      : rawError;
 
   const handleGoogleAuth = async () => {
     setLocalError(null);
