@@ -5,35 +5,41 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
-// Load environment variables from .env if present
-const envFilePath = path.join(process.cwd(), '.env');
-if (fs.existsSync(envFilePath)) {
-  try {
-    const envContent = fs.readFileSync(envFilePath, 'utf8');
-    for (const line of envContent.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
-        const splitIdx = trimmed.indexOf('=');
-        const key = trimmed.slice(0, splitIdx).trim();
-        const val = trimmed.slice(splitIdx + 1).trim().replace(/^["'](.*)["']$/, '$1');
-        if (!process.env[key] && val) {
-          process.env[key] = val;
+// Load environment variables from .env and .env.local if present
+for (const envFile of ['.env', '.env.local']) {
+  const envFilePath = path.join(process.cwd(), envFile);
+  if (fs.existsSync(envFilePath)) {
+    try {
+      const envContent = fs.readFileSync(envFilePath, 'utf8');
+      for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+          const splitIdx = trimmed.indexOf('=');
+          const key = trimmed.slice(0, splitIdx).trim();
+          const val = trimmed.slice(splitIdx + 1).trim().replace(/^["'](.*)["']$/, '$1');
+          if (!process.env[key] && val && !val.startsWith('your_')) {
+            process.env[key] = val;
+          }
         }
       }
+    } catch (envReadErr) {
+      console.warn(`Could not read ${envFile} file:`, envReadErr);
     }
-  } catch (envReadErr) {
-    console.warn('Could not read .env file:', envReadErr);
   }
 }
 
 // Helper to retrieve Gemini API key across environment variables
 function getGeminiApiKey(): string | undefined {
-  return (
+  const key =
     process.env.GEMINI_API_KEY ||
     process.env.API_KEY ||
     process.env.GOOGLE_API_KEY ||
-    process.env.VITE_GEMINI_API_KEY
-  );
+    process.env.VITE_GEMINI_API_KEY;
+
+  if (!key || key.startsWith('your_') || key.includes('placeholder')) {
+    return undefined;
+  }
+  return key;
 }
 
 async function startServer() {
