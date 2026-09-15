@@ -135,6 +135,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   ): Promise<Summon> => {
     if (!currentUser) throw new Error('User must be authenticated to add summons');
 
+    const token = await getAuthToken();
     const now = new Date().toISOString();
     const summonId = 'sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
@@ -183,6 +184,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateSummon = async (id: string, updates: Partial<Summon>) => {
     if (!currentUser) return;
 
+    const token = await getAuthToken();
     const now = new Date().toISOString();
     const updatedRecord = { ...updates, updatedAt: now };
 
@@ -253,6 +255,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   ): Promise<WitnessPerson> => {
     if (!currentUser) throw new Error('User must be authenticated to add witnesses');
 
+    const token = await getAuthToken();
     const now = new Date().toISOString();
     const witnessId = 'wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
@@ -285,6 +288,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateWitness = async (id: string, updates: Partial<WitnessPerson>) => {
     if (!currentUser) return;
 
+    const token = await getAuthToken();
     const now = new Date().toISOString();
     const updatedRecord = { ...updates, updatedAt: now };
 

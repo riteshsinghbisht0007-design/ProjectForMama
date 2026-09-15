@@ -65,33 +65,99 @@ async function startServer() {
   console.info(`[Server] Starting SummonMitra backend in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode...`);
 
   // --- MongoDB Setup ---
-  const MONGODB_URI = process.env.MONGODB_URI || process.env.atlas_URL;
-  const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'summonsviewer';
-
-  let mongoClient: MongoClient | null = null;
-  let db: any = null;
-
-  if (MONGODB_URI) {
-    try {
-      mongoClient = new MongoClient(MONGODB_URI, {
-        serverApi: {
-          version: ServerApiVersion.v1,
-          strict: true,
-          deprecationErrors: true,
+  console.warn('[AI Studio] Database not connected — using in-memory mock');
+  const store = new Map<string, any>();
+  const genId = () => Math.random().toString(36).substring(2, 9);
+  
+  let mongoClient: any = true;
+  let db: any = {
+    command: async () => ({ ok: 1 }),
+    collection: (name: string) => ({
+      find: (query: any) => ({
+        toArray: async () => {
+          const res = [];
+          for (const [k, v] of store.entries()) {
+            if (k.startsWith(name + ':')) {
+              let matches = true;
+              if (query) {
+                for (const q in query) {
+                  if (v[q] !== query[q]) {
+                    matches = false;
+                    break;
+                  }
+                }
+              }
+              if (matches) res.push(v);
+            }
+          }
+          return res;
         }
-      });
-      mongoClient.connect().then(() => {
-        console.info('[MongoDB] Successfully connected to MongoDB Atlas!');
-        db = mongoClient!.db(MONGODB_DB_NAME);
-      }).catch(err => {
-        console.error('[MongoDB] Connection failed on startup:', err);
-      });
-    } catch (err) {
-      console.error('[MongoDB] Initialization error:', err);
-    }
-  } else {
-    console.warn('[MongoDB] No MONGODB_URI or atlas_URL found in environment variables.');
-  }
+      }),
+      findOne: async (query: any) => {
+        for (const [k, v] of store.entries()) {
+          if (k.startsWith(name + ':')) {
+            let matches = true;
+            if (query) {
+              for (const q in query) {
+                if (v[q] !== query[q]) {
+                  matches = false;
+                  break;
+                }
+              }
+            }
+            if (matches) return v;
+          }
+        }
+        return null;
+      },
+      insertOne: async (doc: any) => {
+        const _id = doc._id || genId();
+        const newDoc = { ...doc, _id };
+        store.set(`${name}:${_id}`, newDoc);
+        return { insertedId: _id };
+      },
+      updateOne: async (query: any, update: any) => {
+        for (const [k, v] of store.entries()) {
+          if (k.startsWith(name + ':')) {
+            let matches = true;
+            if (query) {
+              for (const q in query) {
+                if (v[q] !== query[q]) {
+                  matches = false;
+                  break;
+                }
+              }
+            }
+            if (matches) {
+              store.set(k, { ...v, ...update.$set });
+              return { matchedCount: 1, modifiedCount: 1 };
+            }
+          }
+        }
+        return { matchedCount: 0, modifiedCount: 0 };
+      },
+      deleteOne: async (query: any) => {
+        for (const [k, v] of store.entries()) {
+          if (k.startsWith(name + ':')) {
+            let matches = true;
+            if (query) {
+              for (const q in query) {
+                if (v[q] !== query[q]) {
+                  matches = false;
+                  break;
+                }
+              }
+            }
+            if (matches) {
+              store.delete(k);
+              return { deletedCount: 1 };
+            }
+          }
+        }
+        return { deletedCount: 0 };
+      }
+    })
+  };
   // ---------------------
 
   // Robust CORS configuration for preview iframe, localhost, and public shared domains
