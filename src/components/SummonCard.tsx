@@ -55,7 +55,7 @@ export const SummonCard: React.FC<SummonCardProps> = ({
     <div
       onClick={() => onSelect(summon)}
       id={`summon-card-${summon.id}`}
-      className={`p-4 rounded-xl border transition-all duration-200 cursor-pointer relative overflow-hidden bg-card border-border hover:border-border-strong hover:bg-card-hover group shadow-sm ${
+      className={`p-4 rounded-xl border card-premium cursor-pointer relative overflow-hidden bg-card group ${
         isDueSoon ? 'ring-1 ring-amber-500/50' : isOverdue ? 'ring-1 ring-red-500/50' : ''
       }`}
     >

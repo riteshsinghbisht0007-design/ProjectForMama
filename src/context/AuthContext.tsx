@@ -180,9 +180,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateOfficerProfile = async (updates: Partial<OfficerUser>) => {
-    // In a real app this would POST to /api/users/profile
     if (!currentUser) return;
-    setCurrentUser({ ...currentUser, ...updates });
+    
+    try {
+      const response = await fetch('/api/auth/me', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      
+      if (!response.ok) {
+        let err;
+        try {
+          err = await response.json();
+        } catch (parseErr) {
+          throw new Error(`Server returned ${response.status} ${response.statusText}`);
+        }
+        throw new Error(err?.error || 'Failed to update profile');
+      }
+      
+      const data = await response.json();
+      setCurrentUser(data.user);
+    } catch (err: any) {
+      console.error("Profile update error:", err);
+      throw err;
+    }
   };
 
   return (

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSummons } from '../context/SummonContext';
+import { ImageCropperModal } from './ImageCropperModal';
 
 interface OfficerProfileModalProps {
   isOpen: boolean;
@@ -36,6 +37,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -84,16 +86,37 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    // Check file size (e.g. max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image is too large. Please select an image under 5MB.");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
-      setPhotoURL(reader.result as string);
+      setCropImageSrc(reader.result as string);
     };
     reader.readAsDataURL(file);
+    e.target.value = ''; // Reset input
+  };
+
+  const handleCropComplete = (croppedBlob: Blob) => {
+    setCropImageSrc(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      setPhotoURL(base64);
+      updateOfficerProfile({ photoURL: base64 }).catch(err => {
+        alert("Failed to save profile picture: " + err.message);
+      });
+    };
+    reader.readAsDataURL(croppedBlob);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-2xl flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -273,7 +296,17 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </button>
           </div>
         </div>
-      </div>
+          </div>
+
+      {cropImageSrc && (
+        <ImageCropperModal
+          isOpen={true}
+          onClose={() => setCropImageSrc(null)}
+          imageSrc={cropImageSrc}
+          onCropComplete={handleCropComplete}
+          aspectRatio={1} // Square for profile
+        />
+      )}
     </div>
   );
 };

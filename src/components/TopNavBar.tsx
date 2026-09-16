@@ -63,7 +63,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
   }).length;
 
   return (
-    <header className="sticky top-0 z-30 bg-background-alt border-b border-border backdrop-blur-md bg-opacity-95 shadow-lg">
+    <header className="sticky top-0 z-30 bg-background/80 border-b border-border backdrop-blur-xl shadow-premium">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Left: Branding & Emblem */}
         <div className="flex items-center gap-3">
@@ -112,7 +112,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           <button
             onClick={toggleTheme}
             title="Toggle theme"
-            className="p-2 rounded-lg bg-card border border-border hover:bg-muted text-primary-text hover:text-foreground transition-colors cursor-pointer"
+            className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover btn-premium cursor-pointer"
           >
             {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
@@ -123,7 +123,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
               onClick={onOpenWitnessDirectory}
               id="witness-directory-btn"
               title="Witness & People Directory"
-              className="p-2 rounded-lg bg-card border border-border hover:bg-muted text-primary-text hover:text-foreground transition-colors cursor-pointer"
+              className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover btn-premium cursor-pointer"
             >
               <Users className="w-4 h-4" />
             </button>
@@ -134,7 +134,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             onClick={onOpenAlerts}
             id="alerts-bell-btn"
             title="Judicial hearing alerts"
-            className="relative p-2 rounded-lg bg-card border border-border hover:bg-muted text-foreground transition-colors"
+            className="relative p-2 rounded-lg bg-card border border-border text-foreground btn-premium cursor-pointer"
           >
             <Bell className="w-4 h-4" />
             {upcomingCount > 0 && (
@@ -149,7 +149,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             onClick={onOpenProfile}
             id="profile-nav-btn"
             title="Officer profile & settings"
-            className="flex items-center gap-2 p-1.5 rounded-lg bg-card border border-border hover:border-border-strong transition-all"
+            className="flex items-center gap-2 p-1.5 rounded-lg bg-card border border-border hover:border-border-strong btn-premium cursor-pointer"
           >
             {currentUser?.photoURL ? (
               <img

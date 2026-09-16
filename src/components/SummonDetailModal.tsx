@@ -59,6 +59,32 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
   if (!summon) return null;
 
+  
+  const hasUnsavedChanges = () => {
+    if (!isEditing) return false;
+    if (editPersonName !== summon.personName) return true;
+    if (editFatherName !== (summon.fatherName || '')) return true;
+    if (editAddress !== summon.address) return true;
+    if (editHearingDate !== summon.hearingDate) return true;
+    if (editCourtName !== summon.courtName) return true;
+    if (editCourtAddress !== summon.courtAddress) return true;
+    if (editOffense !== (summon.offenseCharges || '')) return true;
+    if (editUrgency !== summon.urgency) return true;
+    return false;
+  };
+
+  const handleClose = () => {
+    if (hasUnsavedChanges()) {
+      if (window.confirm("You have unsaved changes. Discard them?")) {
+        setIsEditing(false);
+        onClose();
+      }
+    } else {
+      setIsEditing(false);
+      onClose();
+    }
+  };
+
   const handleStartEdit = () => {
     setEditPersonName(summon.personName);
     setEditFatherName(summon.fatherName || '');
@@ -163,8 +189,8 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-8 overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-8 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between sticky top-0 z-20">
           <div className="flex items-center gap-3">
@@ -216,7 +242,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               <Bell className="w-4 h-4" />
             </button>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -331,12 +357,26 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                   <Edit2 className="w-3.5 h-3.5" /> Edit Details
                 </button>
               ) : (
-                <button
+                <div className="flex items-center">
+                  <button
                   onClick={handleSaveEdit}
                   className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer"
                 >
                   <Save className="w-3.5 h-3.5" /> Save Changes
                 </button>
+                <button
+                  onClick={() => {
+                    if (hasUnsavedChanges()) {
+                      if (window.confirm("You have unsaved changes. Discard them?")) setIsEditing(false);
+                    } else {
+                      setIsEditing(false);
+                    }
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1 font-bold cursor-pointer ml-3"
+                >
+                  <X className="w-3.5 h-3.5" /> Cancel
+                </button>
+                </div>
               )}
             </div>
 

@@ -12,6 +12,7 @@ import {
   Shield,
   Users,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useAuth } from './context/AuthContext';
 import { useSummons } from './context/SummonContext';
 import { Summon, SummonStatus } from './types';
@@ -51,9 +52,15 @@ export function App() {
   const [isWitnessDirOpen, setIsWitnessDirOpen] = useState(false);
 
   // Special Mac-inspired Welcome animation state
-  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
-    return !sessionStorage.getItem('summonsmitra_welcomed');
+  const [postLoginStage, setPostLoginStage] = useState<'idle' | 'hello' | 'email' | 'hold' | 'exit' | 'dashboard'>(() => {
+    return sessionStorage.getItem('summonsmitra_welcomed') ? 'dashboard' : 'idle';
   });
+
+  React.useEffect(() => {
+    if (currentUser && postLoginStage === 'idle') {
+      setPostLoginStage('hello');
+    }
+  }, [currentUser, postLoginStage]);
 
   // Filtered & Sorted Summons
   const filteredSummons = useMemo(() => {
@@ -110,18 +117,55 @@ export function App() {
     setIsAddModalOpen(true);
   };
 
+
+  const dashboardVariants = {
+    hidden: { opacity: 0, y: 100 },
+    visible: { 
+      opacity: 1, 
+      y: 0, 
+      transition: { 
+        duration: 0.8, 
+        ease: [0.22, 1, 0.36, 1],
+        when: "beforeChildren",
+        staggerChildren: 0.08
+      } 
+    }
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 30 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } }
+  };
+
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-primary-btn selection:text-white">
+    <>
+      {postLoginStage !== 'dashboard' && currentUser && (
+        <WelcomeAnimation 
+          user={currentUser} 
+          stage={postLoginStage}
+          onStageChange={setPostLoginStage}
+        />
+      )}
+      {postLoginStage === 'dashboard' && (
+        <motion.div 
+          initial="hidden" 
+          animate="visible" 
+          variants={dashboardVariants}
+          className="min-h-screen bg-background text-foreground flex flex-col selection:bg-primary selection:text-white"
+        >
+
       {/* Top Police Navigation Bar */}
-      <TopNavBar
+      <motion.div variants={itemVariants} className="w-full relative z-30">
+          <TopNavBar
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenAlerts={() => setIsAlertsOpen(true)}
-      />
+          />
+        </motion.div>
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
         {/* Welcome & Command Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border rounded-2xl p-5 shadow-lg">
+        <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border rounded-2xl p-5 shadow-lg">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono text-warning">
@@ -154,30 +198,30 @@ export function App() {
                 setIsAddModalOpen(true);
               }}
               id="btn-add-summon-header"
-              className="px-5 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs flex items-center gap-2 shadow-lg hover:shadow-blue-500/20 transition-all cursor-pointer"
+              className="px-5 py-2.5 rounded-xl bg-primary-btn text-white font-bold text-xs flex items-center gap-2 btn-premium cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Add Summon</span>
             </button>
           </div>
-        </div>
+        </motion.div>
 
         {/* Dynamic Metric Statistics Grid */}
-        <MetricCardsGrid
+        <motion.div variants={itemVariants}><MetricCardsGrid
           activeFilter={statusFilter}
           onSelectFilter={(f) => {
             setStatusFilter(f);
             if (activeTab === 'calendar') setActiveTab('docket');
           }}
-        />
+        /></motion.div>
 
         {/* Primary View Switcher Tabs */}
-        <div className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
+        <motion.div variants={itemVariants} className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveTab('docket')}
               id="tab-docket-list"
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 btn-premium ${
                 activeTab === 'docket'
                   ? 'bg-primary-muted text-foreground border border-primary-text'
                   : 'bg-card text-muted-foreground hover:text-foreground border border-border'
@@ -222,11 +266,11 @@ export function App() {
               </select>
             </div>
           )}
-        </div>
+        </motion.div>
 
         {/* TAB 1: DOCKET LIST VIEW */}
         {activeTab === 'docket' && (
-          <div className="space-y-4">
+          <motion.div variants={itemVariants} className="space-y-4">
             {/* Search and Status Filter Toolbar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <div className="relative flex-1">
@@ -309,16 +353,16 @@ export function App() {
                 ))}
               </div>
             )}
-          </div>
+          </motion.div>
         )}
 
         {/* TAB 2: COURT CALENDAR VIEW */}
         {activeTab === 'calendar' && (
-          <HearingCalendarView
+          <motion.div variants={itemVariants}><HearingCalendarView
             summons={summons}
             onSelectSummon={(s) => setSelectedSummon(s)}
             onAddSummonForDate={handleOpenAddForDate}
-          />
+          /></motion.div>
         )}
       </main>
 
@@ -353,6 +397,8 @@ export function App() {
         summons={summons}
         onSelectSummon={(s) => setSelectedSummon(s)}
       />
-    </div>
+                </motion.div>
+      )}
+    </>
   );
 }

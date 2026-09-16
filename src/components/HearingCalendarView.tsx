@@ -94,20 +94,20 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
             <button
               onClick={prevMonth}
               id="prev-month-btn"
-              className="p-1.5 rounded-lg border border-border hover:bg-muted text-foreground"
+              className="p-1.5 rounded-lg border border-border text-foreground btn-premium"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               onClick={() => setCurrentDate(new Date())}
-              className="px-2.5 py-1 text-xs rounded-lg border border-border hover:bg-muted text-primary-text"
+              className="px-2.5 py-1 text-xs rounded-lg border border-border text-primary-text btn-premium"
             >
               Today
             </button>
             <button
               onClick={nextMonth}
               id="next-month-btn"
-              className="p-1.5 rounded-lg border border-border hover:bg-muted text-foreground"
+              className="p-1.5 rounded-lg border border-border text-foreground btn-premium"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -196,7 +196,7 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
           <button
             onClick={() => onAddSummonForDate(selectedDateStr)}
             id="add-summon-for-date-btn"
-            className="px-3 py-1.5 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+            className="px-3 py-1.5 bg-primary-btn text-white font-bold text-xs rounded-lg flex items-center gap-1.5 btn-premium"
           >
             <Plus className="w-3.5 h-3.5" /> Add for this Date
           </button>
@@ -212,7 +212,7 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
               <div
                 key={s.id}
                 onClick={() => onSelectSummon(s)}
-                className="p-3.5 bg-background border border-border hover:border-border-strong rounded-xl cursor-pointer transition-colors space-y-2"
+                className="p-3.5 bg-background border border-border rounded-xl cursor-pointer space-y-2 card-premium"
               >
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-bold text-foreground">{s.summonNumber}</span>

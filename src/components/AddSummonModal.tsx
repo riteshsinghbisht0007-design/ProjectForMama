@@ -30,6 +30,7 @@ import { useToast } from './Toast';
 import { scanSummonDocument, parseJudicialQRCode, ExtractedSummonData } from '../utils/ocrService';
 import { SummonStatus, SummonUrgency, WitnessPerson } from '../types';
 import { SelectPersonModal } from './SelectPersonModal';
+import { ImageCropperModal } from './ImageCropperModal';
 
 interface AddSummonModalProps {
   isOpen: boolean;
@@ -108,6 +109,9 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const [status, setStatus] = useState<SummonStatus>('Pending');
 
   const [formError, setFormError] = useState<string | null>(null);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [cropMimeType, setCropMimeType] = useState<string>('image/jpeg');
+  const [cropFileName, setCropFileName] = useState<string>('image.jpg');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Reset or initialize on open
@@ -173,20 +177,11 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
       const captureName = `Camera_Capture_${Date.now()}.jpg`;
-
-      // Convert dataUrl to a blob file
-      fetch(dataUrl)
-        .then((res) => res.blob())
-        .then((blob) => {
-          const file = new File([blob], captureName, { type: 'image/jpeg' });
-          setRawFile(file);
-        });
-
-      setAttachmentPreview(dataUrl);
-      setAttachmentType('image');
-      setFileName(captureName);
+      
+      setCropMimeType('image/jpeg');
+      setCropFileName(captureName);
+      setCropImageSrc(dataUrl);
       stopCamera();
-      triggerOcrPipeline(dataUrl, 'image/jpeg');
     }
   };
 
@@ -195,20 +190,35 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setRawFile(file);
-    setFileName(file.name);
-    setAttachmentType('image');
+    setCropFileName(file.name);
+    setCropMimeType(file.type || 'image/jpeg');
 
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string;
-      setAttachmentPreview(result);
-      triggerOcrPipeline(result, file.type || 'image/jpeg');
+      setCropImageSrc(reader.result as string);
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   // PDF file upload
+  
+  const handleCropComplete = (croppedBlob: Blob) => {
+    setCropImageSrc(null);
+    const file = new File([croppedBlob], cropFileName, { type: cropMimeType });
+    setRawFile(file);
+    setAttachmentType('image');
+    setFileName(cropFileName);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setAttachmentPreview(dataUrl);
+      triggerOcrPipeline(dataUrl, cropMimeType);
+    };
+    reader.readAsDataURL(croppedBlob);
+  };
+
   const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -528,8 +538,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-      <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-6 overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-6 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Modal Header & Step Indicator */}
         <div className="bg-background-alt border-b border-border px-5 sm:px-6 py-4 sticky top-0 z-20 space-y-3">
           <div className="flex items-center justify-between">
@@ -719,7 +729,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
               {/* QR Scanner Drawer */}
               {isQrActive && (
-                <div className="bg-card border border-border rounded-2xl p-5 space-y-4 shadow-xl">
+                <div className="bg-card border border-border rounded-2xl p-5 space-y-4 shadow-premium animate-scaleIn">
                   <div className="flex items-center justify-between pb-2 border-b border-border">
                     <span className="text-xs font-bold text-foreground flex items-center gap-2">
                       <QrCode className="w-4 h-4 text-warning" />

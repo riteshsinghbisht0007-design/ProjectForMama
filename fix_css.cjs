@@ -1,4 +1,6 @@
+const fs = require('fs');
 
+let content = `
 @import "tailwindcss";
 @theme {
   --color-background: var(--background);
@@ -132,21 +134,6 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
+`;
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95) translateY(10px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-.animate-fadeIn {
-  animation: fadeIn 0.25s ease-out forwards;
-}
-
-.animate-scaleIn {
-  animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
+fs.writeFileSync('src/index.css', content);

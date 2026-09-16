@@ -68,10 +68,10 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
             key={card.id}
             id={card.id}
             onClick={() => onSelectFilter(card.filter)}
-            className={`text-left p-4 rounded-xl border transition-all duration-200 relative overflow-hidden ${
+            className={`text-left p-4 rounded-xl border card-premium relative overflow-hidden ${
               isSelected
                 ? `${card.bgActive} shadow-lg ring-1 ring-white/10`
-                : 'bg-card border-border hover:border-border-strong hover:bg-card-hover'
+                : 'bg-card border-border hover:border-primary-btn/30 hover:bg-card-hover'
             }`}
           >
             <div className="flex items-center justify-between mb-2">

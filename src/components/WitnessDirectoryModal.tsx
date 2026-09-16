@@ -181,8 +181,8 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-background border border-border rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-4xl overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -343,7 +343,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                             type="button"
                             onClick={() => handleCopy(w)}
                             title="Copy formatted dispatch text"
-                            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg text-muted-foreground btn-premium cursor-pointer"
                           >
                             {copiedId === w.id ? (
                               <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -355,7 +355,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                             type="button"
                             onClick={() => handleForward(w)}
                             title="Forward via WhatsApp / Device Share"
-                            className="p-1.5 rounded-lg hover:bg-muted text-primary-text hover:text-foreground transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg text-primary-text btn-premium cursor-pointer"
                           >
                             <Share2 className="w-3.5 h-3.5" />
                           </button>
@@ -365,7 +365,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(w)}
-                            className="p-1.5 rounded-lg hover:bg-muted text-foreground hover:text-foreground transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg text-foreground btn-premium cursor-pointer"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
