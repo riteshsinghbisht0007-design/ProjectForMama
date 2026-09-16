@@ -66,6 +66,7 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export const facebookProvider = new FacebookAuthProvider();
+facebookProvider.addScope('email');
 
 export {
   // Auth primitives

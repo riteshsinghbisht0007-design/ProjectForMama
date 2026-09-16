@@ -35,6 +35,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const [photoURL, setPhotoURL] = useState(currentUser?.photoURL || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -69,9 +70,14 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   };
 
   const handleLogout = async () => {
-    if (confirm('Are you sure you want to log out of the police summon portal?')) {
-      onClose();
+    setIsLoggingOut(true);
+    try {
       await logout();
+      onClose();
+    } catch (err) {
+      console.error('Logout failed', err);
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
@@ -87,23 +93,23 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-[#0B1326] border border-[#222A3D] rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-2xl flex flex-col">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-2xl flex flex-col">
         {/* Header */}
-        <div className="bg-[#0A192F] border-b border-[#222A3D] px-6 py-4 flex items-center justify-between">
+        <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-[#1E3A5F] text-[#ADC8F5]">
+            <div className="p-2 rounded-lg bg-primary-muted text-primary-text">
               <Shield className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Officer Profile & Telemetry</h2>
-              <p className="text-xs text-[#8F9097]">
+              <h2 className="text-lg font-bold text-foreground">Officer Profile & Telemetry</h2>
+              <p className="text-xs text-muted-foreground">
                 Authenticated as Law Enforcement Personnel
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#8F9097] hover:text-white hover:bg-[#1E293B] transition-colors"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -112,22 +118,22 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
         {/* Content */}
         <div className="p-6 space-y-6">
           {/* Officer Identity Card */}
-          <div className="flex items-center gap-4 p-4 bg-[#131B2E] border border-[#222A3D] rounded-xl relative">
+          <div className="flex items-center gap-4 p-4 bg-card border border-border rounded-xl relative">
             <div className="relative">
               {photoURL ? (
                 <img
                   src={photoURL}
                   alt="Officer portrait"
-                  className="w-16 h-16 rounded-xl object-cover border-2 border-[#39475F]"
+                  className="w-16 h-16 rounded-xl object-cover border-2 border-border-strong"
                 />
               ) : (
-                <div className="w-16 h-16 rounded-xl bg-[#1E293B] flex items-center justify-center text-[#B9C7E4] border-2 border-[#39475F]">
+                <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center text-info-text border-2 border-border-strong">
                   <User className="w-8 h-8" />
                 </div>
               )}
               <label
                 htmlFor="avatar-file"
-                className="absolute -bottom-1 -right-1 p-1 bg-[#2F4A70] hover:bg-[#3B82F6] text-white rounded-md cursor-pointer shadow"
+                className="absolute -bottom-1 -right-1 p-1 bg-primary-btn text-white hover:bg-primary-hover rounded-md cursor-pointer shadow"
               >
                 <Camera className="w-3 h-3" />
                 <input
@@ -142,31 +148,31 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white truncate">{currentUser.displayName}</h3>
-                <span className="px-2 py-0.5 text-[10px] font-mono bg-[#1E3A5F] text-[#ADC8F5] rounded uppercase">
+                <h3 className="text-base font-bold text-foreground truncate">{currentUser.displayName}</h3>
+                <span className="px-2 py-0.5 text-[10px] font-mono bg-primary-muted text-primary-text rounded uppercase">
                   {currentUser.authProvider}
                 </span>
               </div>
-              <p className="text-xs font-mono text-[#FFB77D] mt-0.5">
+              <p className="text-xs font-mono text-warning mt-0.5">
                 Badge #{currentUser.badgeNumber} • {currentUser.rank}
               </p>
-              <p className="text-xs text-[#8F9097] truncate mt-0.5">
+              <p className="text-xs text-muted-foreground truncate mt-0.5">
                 {currentUser.policeStation}, {currentUser.district}
               </p>
             </div>
           </div>
 
           {/* System Telemetry & Isolation */}
-          <div className="p-3.5 bg-[#0A192F] border border-[#222A3D] rounded-xl text-xs space-y-2">
-            <div className="flex items-center justify-between text-[#8F9097]">
+          <div className="p-3.5 bg-background-alt border border-border rounded-xl text-xs space-y-2">
+            <div className="flex items-center justify-between text-muted-foreground">
               <span>Hardware-Isolated Account:</span>
-              <span className="font-mono text-white text-[11px]">{currentUser.uid}</span>
+              <span className="font-mono text-foreground text-[11px]">{currentUser.uid}</span>
             </div>
-            <div className="flex items-center justify-between text-[#8F9097]">
+            <div className="flex items-center justify-between text-muted-foreground">
               <span>Active User Records:</span>
-              <span className="font-mono text-[#ADC8F5]">{summons.length} Summons</span>
+              <span className="font-mono text-primary-text">{summons.length} Summons</span>
             </div>
-            <div className="flex items-center justify-between text-[#8F9097]">
+            <div className="flex items-center justify-between text-muted-foreground">
               <span>Encryption Protocol:</span>
               <span className="text-emerald-400 flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" /> End-to-End Vault
@@ -175,8 +181,8 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
           </div>
 
           {/* Edit Form */}
-          <form onSubmit={handleSave} className="space-y-3 border-t border-[#222A3D] pt-4">
-            <span className="text-xs font-bold text-[#ADC8F5] uppercase tracking-wider block">
+          <form onSubmit={handleSave} className="space-y-3 border-t border-border pt-4">
+            <span className="text-xs font-bold text-primary-text uppercase tracking-wider block">
               Officer Credentials
             </span>
 
@@ -188,62 +194,62 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] text-[#8F9097] block mb-1">Full Officer Name</label>
+                <label className="text-[11px] text-muted-foreground block mb-1">Full Officer Name</label>
                 <input
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full bg-[#131B2E] border border-[#222A3D] rounded-lg px-2.5 py-1.5 text-xs text-white"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-[#8F9097] block mb-1">Badge Number</label>
+                <label className="text-[11px] text-muted-foreground block mb-1">Badge Number</label>
                 <input
                   type="text"
                   value={badgeNumber}
                   onChange={(e) => setBadgeNumber(e.target.value)}
-                  className="w-full bg-[#131B2E] border border-[#222A3D] rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground font-mono"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] text-[#8F9097] block mb-1">Rank / Designation</label>
+                <label className="text-[11px] text-muted-foreground block mb-1">Rank / Designation</label>
                 <input
                   type="text"
                   value={rank}
                   onChange={(e) => setRank(e.target.value)}
-                  className="w-full bg-[#131B2E] border border-[#222A3D] rounded-lg px-2.5 py-1.5 text-xs text-white"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-[#8F9097] block mb-1">Police Station</label>
+                <label className="text-[11px] text-muted-foreground block mb-1">Police Station</label>
                 <input
                   type="text"
                   value={policeStation}
                   onChange={(e) => setPoliceStation(e.target.value)}
-                  className="w-full bg-[#131B2E] border border-[#222A3D] rounded-lg px-2.5 py-1.5 text-xs text-white"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
                 />
               </div>
             </div>
 
             <div>
-              <label className="text-[11px] text-[#8F9097] block mb-1">District / Jurisdiction</label>
+              <label className="text-[11px] text-muted-foreground block mb-1">District / Jurisdiction</label>
               <input
                 type="text"
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
-                className="w-full bg-[#131B2E] border border-[#222A3D] rounded-lg px-2.5 py-1.5 text-xs text-white"
+                className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
               />
             </div>
 
             <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="px-4 py-2 bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+                className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
               >
                 <Save className="w-3.5 h-3.5" /> Save Profile
               </button>
@@ -251,13 +257,19 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
           </form>
 
           {/* Logout Button */}
-          <div className="border-t border-[#222A3D] pt-4">
+          <div className="border-t border-border pt-4">
             <button
               onClick={handleLogout}
+              disabled={isLoggingOut}
               id="logout-btn"
-              className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800/80 text-red-200 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
+              className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800/80 text-red-200 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
-              <LogOut className="w-4 h-4" /> End Officer Session & Log Out
+              {isLoggingOut ? (
+                <div className="w-4 h-4 border-2 border-red-200 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <LogOut className="w-4 h-4" />
+              )}
+              {isLoggingOut ? 'Ending Session...' : 'End Officer Session & Log Out'}
             </button>
           </div>
         </div>

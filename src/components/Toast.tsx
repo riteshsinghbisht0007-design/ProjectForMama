@@ -49,19 +49,19 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             key={toast.id}
             className={`pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 ${
               toast.type === 'success'
-                ? 'bg-[#064E3B]/90 border-emerald-500/50 text-white'
+                ? 'bg-success-muted/90 border-emerald-500/50 text-foreground'
                 : toast.type === 'error'
-                ? 'bg-red-950/95 border-red-600/70 text-red-100'
+                ? 'bg-red-50 dark:bg-red-950/95 border-red-200 dark:border-red-600/70 text-red-900 dark:text-red-100'
                 : toast.type === 'warning'
-                ? 'bg-amber-950/95 border-amber-500/60 text-amber-100'
-                : 'bg-[#131B2E]/95 border-[#39475F] text-[#DAE2FD]'
+                ? 'bg-amber-50 dark:bg-amber-950/95 border-amber-200 dark:border-amber-500/60 text-amber-900 dark:text-amber-100'
+                : 'bg-card/95 border-border-strong text-foreground'
             }`}
           >
             <div className="shrink-0 mt-0.5">
               {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
               {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-red-400" />}
               {toast.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-400" />}
-              {toast.type === 'info' && <Info className="w-4 h-4 text-[#ADC8F5]" />}
+              {toast.type === 'info' && <Info className="w-4 h-4 text-primary-text" />}
             </div>
 
             <div className="flex-1 min-w-0">
@@ -75,7 +75,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
             <button
               onClick={() => removeToast(toast.id)}
-              className="shrink-0 p-1 rounded-md text-white/60 hover:text-white transition-colors"
+              className="shrink-0 p-1 rounded-md text-foreground/60 hover:text-foreground transition-colors"
             >
               <X className="w-3.5 h-3.5" />
             </button>

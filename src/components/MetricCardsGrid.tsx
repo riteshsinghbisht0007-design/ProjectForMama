@@ -22,8 +22,8 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       count: metrics.total,
       icon: FileText,
       color: '#B9C7E4',
-      bgActive: 'border-[#B9C7E4] bg-[#171F33]',
-      badgeBg: 'bg-[#1E293B] text-[#DAE2FD]',
+      bgActive: 'border-info-text bg-card-hover',
+      badgeBg: 'bg-muted text-foreground',
     },
     {
       id: 'metric-pending',
@@ -32,8 +32,8 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       count: metrics.pending,
       icon: Clock,
       color: '#FFB77D',
-      bgActive: 'border-[#FFB77D] bg-[#2B1300]/40',
-      badgeBg: 'bg-[#4D2600]/50 text-[#FFB77D]',
+      bgActive: 'border-warning bg-warning-muted/40',
+      badgeBg: 'bg-warning-muted/50 text-warning',
     },
     {
       id: 'metric-upcoming',
@@ -42,8 +42,8 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       count: metrics.upcoming,
       icon: Calendar,
       color: '#ADC8F5',
-      bgActive: 'border-[#ADC8F5] bg-[#131B2E]',
-      badgeBg: 'bg-[#133155]/60 text-[#ADC8F5]',
+      bgActive: 'border-primary-text bg-card',
+      badgeBg: 'bg-info-muted/60 text-primary-text',
     },
     {
       id: 'metric-completed',
@@ -52,8 +52,8 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       count: metrics.completed,
       icon: CheckCircle2,
       color: '#34D399',
-      bgActive: 'border-[#34D399] bg-[#064E3B]/30',
-      badgeBg: 'bg-[#064E3B]/60 text-[#34D399]',
+      bgActive: 'border-success bg-success-muted/30',
+      badgeBg: 'bg-success-muted/60 text-success',
     },
   ];
 
@@ -71,11 +71,11 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
             className={`text-left p-4 rounded-xl border transition-all duration-200 relative overflow-hidden ${
               isSelected
                 ? `${card.bgActive} shadow-lg ring-1 ring-white/10`
-                : 'bg-[#131B2E] border-[#222A3D] hover:border-[#39475F] hover:bg-[#171F33]'
+                : 'bg-card border-border hover:border-border-strong hover:bg-card-hover'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-[#8F9097] uppercase tracking-wider">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 {card.label}
               </span>
               <div className={`p-1.5 rounded-lg ${card.badgeBg}`}>
@@ -83,13 +83,13 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
               </div>
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl sm:text-3xl font-bold font-mono text-white">
+              <span className="text-2xl sm:text-3xl font-bold font-mono text-foreground">
                 {card.count}
               </span>
-              <span className="text-[11px] text-[#8F9097]">records</span>
+              <span className="text-[11px] text-muted-foreground">records</span>
             </div>
             {isSelected && (
-              <div className="mt-2 text-[10px] font-mono text-[#ADC8F5] flex items-center gap-1">
+              <div className="mt-2 text-[10px] font-mono text-primary-text flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#ADC8F5]"></span>
                 Filtering active
               </div>

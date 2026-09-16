@@ -101,16 +101,16 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-[#0B1326] border border-[#222A3D] rounded-2xl w-full max-w-4xl my-8 overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-4xl my-8 overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="bg-[#0A192F] border-b border-[#222A3D] px-6 py-4 flex items-center justify-between">
+        <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-[#2F4A70] text-[#ADC8F5]">
+            <div className="p-2 rounded-lg bg-primary-btn text-white">
               <FileImage className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Visual Split-Copy Generator</h2>
-              <p className="text-xs text-[#8F9097]">
+              <h2 className="text-lg font-bold text-foreground">Visual Split-Copy Generator</h2>
+              <p className="text-xs text-muted-foreground">
                 One side: Document scan • Other side: Extracted judicial details & address
               </p>
             </div>
@@ -118,7 +118,7 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
           <button
             onClick={onClose}
             id="close-split-modal-btn"
-            className="p-1.5 rounded-lg text-[#8F9097] hover:text-white hover:bg-[#1E293B] transition-colors"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -127,17 +127,17 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
         {/* Content Preview */}
         <div className="p-6 overflow-y-auto space-y-4">
           {isGenerating ? (
-            <div className="h-96 flex flex-col items-center justify-center gap-3 border border-[#222A3D] rounded-xl bg-[#131B2E]">
-              <Loader2 className="w-8 h-8 text-[#FFB77D] animate-spin" />
-              <p className="text-sm font-medium text-[#DAE2FD]">
+            <div className="h-96 flex flex-col items-center justify-center gap-3 border border-border rounded-xl bg-card">
+              <Loader2 className="w-8 h-8 text-warning animate-spin" />
+              <p className="text-sm font-medium text-foreground">
                 Generating official side-by-side composite…
               </p>
-              <p className="text-xs text-[#8F9097]">
+              <p className="text-xs text-muted-foreground">
                 Rendering document scan with judicial particulars and address box
               </p>
             </div>
           ) : splitImageUrl ? (
-            <div className="border border-[#39475F] rounded-xl overflow-hidden shadow-xl bg-[#0B1326]">
+            <div className="border border-border-strong rounded-xl overflow-hidden shadow-xl bg-background">
               <img
                 src={splitImageUrl}
                 alt="Summon side-by-side copy"
@@ -145,39 +145,39 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
               />
             </div>
           ) : (
-            <div className="p-8 text-center text-[#8F9097] border border-[#222A3D] rounded-xl">
+            <div className="p-8 text-center text-muted-foreground border border-border rounded-xl">
               Failed to generate visual copy.
             </div>
           )}
 
           {/* Forward Text Preview */}
-          <div className="p-3.5 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-[#DAE2FD] font-mono">
+          <div className="p-3.5 bg-card border border-border rounded-xl text-xs text-foreground font-mono">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="font-bold text-[#ADC8F5]">Formatted Dispatch Text (For Field Officers / WhatsApp):</span>
+              <span className="font-bold text-primary-text">Formatted Dispatch Text (For Field Officers / WhatsApp):</span>
               <button
                 onClick={handleCopyText}
-                className="text-xs text-[#FFB77D] hover:underline flex items-center gap-1"
+                className="text-xs text-warning hover:underline flex items-center gap-1"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 {copied ? 'Copied to Clipboard!' : 'Copy Text'}
               </button>
             </div>
-            <div className="text-[11px] text-[#C5C6CD] whitespace-pre-wrap line-clamp-3">
+            <div className="text-[11px] text-foreground-alt whitespace-pre-wrap line-clamp-3">
               {generateFormattedForwardText(summon)}
             </div>
           </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="bg-[#0A192F] border-t border-[#222A3D] px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="text-xs text-[#8F9097]">
-            Summon Ref: <span className="font-mono text-white">{summon.summonNumber}</span>
+        <div className="bg-background-alt border-t border-border px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs text-muted-foreground">
+            Summon Ref: <span className="font-mono text-foreground">{summon.summonNumber}</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleCopyText}
-              className="px-3.5 py-2 rounded-xl border border-[#222A3D] hover:bg-[#1E293B] text-xs font-medium text-[#DAE2FD] flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl border border-border hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied' : 'Copy Text'}
@@ -187,16 +187,16 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf}
               id="download-pdf-modal-btn"
-              className="px-3.5 py-2 rounded-xl bg-[#222A3D] hover:bg-[#2F4A70] text-[#ADC8F5] hover:text-white text-xs font-bold flex items-center gap-1.5 border border-[#39475F] transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-border hover:bg-primary-btn text-white hover:text-foreground text-xs font-bold flex items-center gap-1.5 border border-border-strong transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-[#FFB77D]" /> : <FileText className="w-4 h-4 text-[#FFB77D]" />}
+              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-warning" /> : <FileText className="w-4 h-4 text-warning" />}
               <span>Download PDF</span>
             </button>
 
             <button
               onClick={handleDownload}
               disabled={!splitImageUrl || isGenerating}
-              className="px-3.5 py-2 rounded-xl bg-[#1E3A5F] hover:bg-[#2F4A70] text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-primary-muted hover:bg-primary-btn text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Download className="w-4 h-4" /> Download Image
             </button>
@@ -204,7 +204,7 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
             <button
               onClick={handleShare}
               disabled={!splitImageUrl || isGenerating || sharing}
-              className="px-4 py-2 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-primary-hover hover:bg-blue-600 text-foreground text-xs font-bold flex items-center gap-1.5 shadow-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Share2 className="w-4 h-4" /> Forward & Share
             </button>

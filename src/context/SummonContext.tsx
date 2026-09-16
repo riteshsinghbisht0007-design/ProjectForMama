@@ -32,13 +32,7 @@ const SummonContext = createContext<SummonContextType | undefined>(undefined);
 export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
 
-  const getAuthToken = async () => {
-    if (!currentUser) return '';
-    if (currentUser.uid.startsWith('usr_')) return currentUser.uid;
-    return typeof (currentUser as any).getIdToken === 'function' ? await (currentUser as any).getIdToken() : currentUser.uid;
-  };
-
-  const [summons, setSummons] = useState<Summon[]>([]);
+    const [summons, setSummons] = useState<Summon[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Witnesses state
@@ -51,10 +45,9 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Fetch summons from MongoDB API
   const fetchSummons = useCallback(async (uid: string) => {
-    const token = await getAuthToken();
     try {
       const res = await fetch('/api/summons', {
-        headers: { Authorization: `Bearer ${token}` }
+        credentials: 'include'
       });
       if (res.ok) {
         const data = await res.json();
@@ -70,10 +63,9 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Fetch witnesses from MongoDB API
   const fetchWitnesses = useCallback(async (uid: string) => {
-    const token = await getAuthToken();
     try {
       const res = await fetch('/api/witnesses', {
-        headers: { Authorization: `Bearer ${token}` }
+        credentials: 'include'
       });
       if (res.ok) {
         const data = await res.json();
@@ -106,26 +98,46 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchWitnesses(currentUser.uid);
   }, [currentUser, fetchWitnesses]);
 
-  // 2. Instant document attachment converter (fast base64/dataURL, no cloud upload latency)
+  // 2. Secure cloud document upload
   const uploadAttachment = async (
-    _summonId: string,
+    summonId: string,
     fileOrDataUrl: string | File,
-    _fileName: string
+    fileName: string
   ): Promise<string> => {
-    if (typeof fileOrDataUrl === 'string') {
-      return fileOrDataUrl;
+    if (typeof fileOrDataUrl === 'string' && fileOrDataUrl.startsWith('http')) {
+      return fileOrDataUrl; // Already a URL
     }
 
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        resolve((reader.result as string) || '');
-      };
-      reader.onerror = () => {
-        resolve('');
-      };
-      reader.readAsDataURL(fileOrDataUrl);
-    });
+    try {
+      let fileToUpload: Blob;
+      if (typeof fileOrDataUrl === 'string') {
+        // It's a base64 data URL, convert to Blob
+        const fetchResponse = await fetch(fileOrDataUrl);
+        fileToUpload = await fetchResponse.blob();
+      } else {
+        fileToUpload = fileOrDataUrl;
+      }
+
+      // Import firebase storage here or dynamically
+      const { storage, storageRef, uploadBytes, getDownloadURL } = await import('../services/firebase');
+      
+      const fileExt = fileName.split('.').pop() || 'png';
+      const storagePath = `summons/${summonId}/${Date.now()}.${fileExt}`;
+      const fileRef = storageRef(storage, storagePath);
+      
+      await uploadBytes(fileRef, fileToUpload);
+      const downloadURL = await getDownloadURL(fileRef);
+      return downloadURL;
+    } catch (err) {
+      console.error('Failed to upload attachment:', err);
+      // Fallback to dataURL if upload fails
+      if (typeof fileOrDataUrl === 'string') return fileOrDataUrl;
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string) || '');
+        reader.readAsDataURL(fileOrDataUrl);
+      });
+    }
   };
 
   // 3. Quick Instant Add Summon
@@ -134,8 +146,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     attachmentFile?: File | Blob | null
   ): Promise<Summon> => {
     if (!currentUser) throw new Error('User must be authenticated to add summons');
-
-    const token = await getAuthToken();
     const now = new Date().toISOString();
     const summonId = 'sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
@@ -161,66 +171,89 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updatedAt: now,
     };
 
-    // Save immediately and synchronously
-    setSummons((prev) => {
-      const updated = [newSummon, ...prev.filter((s) => s.id !== summonId)];
-      return updated;
-    });
-
-    // Save to DB
-    fetch('/api/summons', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(newSummon)
-    }).catch(err => console.error("Failed to save summon to DB:", err));
-
-    return newSummon;
+    // Save to DB first to ensure persistence
+    try {
+      const response = await fetch('/api/summons', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newSummon)
+      });
+      
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to save to database: ${response.statusText}`);
+      }
+      
+      const savedSummon = await response.json();
+      
+      // Save synchronously to local state only after DB success
+      setSummons((prev) => {
+        const updated = [savedSummon, ...prev.filter((s) => s.id !== summonId)];
+        return updated;
+      });
+      
+      return savedSummon;
+    } catch (err) {
+      console.error("Failed to save summon to DB:", err);
+      throw err;
+    }
   };
 
   // 4. Quick Instant Update Summon
   const updateSummon = async (id: string, updates: Partial<Summon>) => {
     if (!currentUser) return;
-
-    const token = await getAuthToken();
     const now = new Date().toISOString();
     const updatedRecord = { ...updates, updatedAt: now };
 
-    setSummons((prev) => {
-      const updated = prev.map((s) => (s.id === id ? { ...s, ...updatedRecord } : s));
-      return updated;
-    });
+    try {
+      const response = await fetch(`/api/summons/${id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updatedRecord)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update summon in database');
+      }
 
-    // Save to DB
-    fetch(`/api/summons/${id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(updatedRecord)
-    }).catch(err => console.error("Failed to update summon in DB:", err));
+      setSummons((prev) => {
+        const updated = prev.map((s) => (s.id === id ? { ...s, ...updatedRecord } : s));
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to update summon in DB:", err);
+      throw err;
+    }
   };
 
   // 5. Quick Instant Delete Summon
   const deleteSummon = async (id: string) => {
-    const token = await getAuthToken();
     if (!currentUser) return;
 
-    setSummons((prev) => {
-      const updated = prev.filter((s) => s.id !== id);
-      return updated;
-    });
-
-    // Delete from DB
-    fetch(`/api/summons/${id}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`
+    try {
+      const response = await fetch(`/api/summons/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete summon from database');
       }
-    }).catch(err => console.error("Failed to delete summon from DB:", err));
+
+      setSummons((prev) => {
+        const updated = prev.filter((s) => s.id !== id);
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to delete summon from DB:", err);
+      throw err;
+    }
   };
 
   // 6. Mark as Served & Closed
@@ -254,8 +287,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     witnessData: Omit<WitnessPerson, 'id' | 'userId' | 'createdAt' | 'updatedAt'>
   ): Promise<WitnessPerson> => {
     if (!currentUser) throw new Error('User must be authenticated to add witnesses');
-
-    const token = await getAuthToken();
     const now = new Date().toISOString();
     const witnessId = 'wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
@@ -267,63 +298,84 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updatedAt: now,
     };
 
-    setWitnesses((prev) => {
-      const updated = [newWitness, ...prev.filter((w) => w.id !== witnessId)];
-      return updated;
-    });
-
-    // Save to DB
-    fetch('/api/witnesses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(newWitness)
-    }).catch(err => console.error("Failed to save witness to DB:", err));
-
-    return newWitness;
+    try {
+      const response = await fetch('/api/witnesses', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newWitness)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save witness to database');
+      }
+      
+      const savedWitness = await response.json();
+      
+      setWitnesses((prev) => {
+        const updated = [savedWitness, ...prev.filter((w) => w.id !== witnessId)];
+        return updated;
+      });
+      
+      return savedWitness;
+    } catch (err) {
+      console.error("Failed to save witness to DB:", err);
+      throw err;
+    }
   };
 
   const updateWitness = async (id: string, updates: Partial<WitnessPerson>) => {
     if (!currentUser) return;
-
-    const token = await getAuthToken();
     const now = new Date().toISOString();
     const updatedRecord = { ...updates, updatedAt: now };
 
-    setWitnesses((prev) => {
-      const updated = prev.map((w) => (w.id === id ? { ...w, ...updatedRecord } : w));
-      return updated;
-    });
+    try {
+      const response = await fetch(`/api/witnesses/${id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updatedRecord)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update witness in database');
+      }
 
-    // Save to DB
-    fetch(`/api/witnesses/${id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(updatedRecord)
-    }).catch(err => console.error("Failed to update witness in DB:", err));
+      setWitnesses((prev) => {
+        const updated = prev.map((w) => (w.id === id ? { ...w, ...updatedRecord } : w));
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to update witness in DB:", err);
+      throw err;
+    }
   };
 
   const deleteWitness = async (id: string) => {
-    const token = await getAuthToken();
     if (!currentUser) return;
 
-    setWitnesses((prev) => {
-      const updated = prev.filter((w) => w.id !== id);
-      return updated;
-    });
-
-    // Delete from DB
-    fetch(`/api/witnesses/${id}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`
+    try {
+      const response = await fetch(`/api/witnesses/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete witness from database');
       }
-    }).catch(err => console.error("Failed to delete witness from DB:", err));
+
+      setWitnesses((prev) => {
+        const updated = prev.filter((w) => w.id !== id);
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to delete witness from DB:", err);
+      throw err;
+    }
   };
 
   const getWitnessById = (id: string) => witnesses.find((w) => w.id === id);

@@ -63,20 +63,20 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, onComp
   return (
     <div
       onClick={handleSkip}
-      className={`fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0B1326] transition-opacity duration-700 cursor-pointer select-none ${
+      className={`fixed inset-0 z-50 flex flex-col items-center justify-center bg-background transition-opacity duration-700 cursor-pointer select-none ${
         isExiting ? 'opacity-0 scale-105' : 'opacity-100 scale-100'
       }`}
     >
       {/* Ambient background glow */}
-      <div className="absolute w-96 h-96 rounded-full bg-[#1E3A5F]/20 blur-3xl pointer-events-none -top-20 -left-20 animate-pulse" />
-      <div className="absolute w-[30rem] h-[30rem] rounded-full bg-[#FFB77D]/10 blur-3xl pointer-events-none -bottom-20 -right-20 animate-pulse" />
+      <div className="absolute w-96 h-96 rounded-full bg-primary-muted/20 blur-3xl pointer-events-none -top-20 -left-20 animate-pulse" />
+      <div className="absolute w-[30rem] h-[30rem] rounded-full bg-warning/10 blur-3xl pointer-events-none -bottom-20 -right-20 animate-pulse" />
 
       {/* Center Container */}
       <div className="relative z-10 flex flex-col items-center text-center max-w-xl px-6 space-y-6">
         {/* Animated Police Crest Emblem */}
         <div className="relative">
-          <div className="absolute inset-0 rounded-3xl bg-[#2F4A70] blur-xl opacity-60 animate-ping" />
-          <div className="relative w-20 h-20 rounded-2xl bg-[#131B2E] border-2 border-[#39475F] shadow-2xl flex items-center justify-center text-[#FFB77D]">
+          <div className="absolute inset-0 rounded-3xl bg-primary-btn text-white blur-xl opacity-60 animate-ping" />
+          <div className="relative w-20 h-20 rounded-2xl bg-card border-2 border-border-strong shadow-2xl flex items-center justify-center text-warning">
             <Shield className="w-10 h-10 drop-shadow-[0_0_12px_rgba(255,183,125,0.5)]" />
           </div>
         </div>
@@ -84,15 +84,15 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, onComp
         {/* Hello Word Letter Reveal / Personalized Greeting */}
         <div className="min-h-[5rem] flex items-center justify-center">
           {!showPersonalized ? (
-            <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-white via-[#DAE2FD] to-[#ADC8F5] font-mono">
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-white via-foreground to-primary-text font-mono">
               {typedWord}
-              <span className="inline-block w-1.5 h-10 ml-1 bg-[#FFB77D] animate-blink align-middle" />
+              <span className="inline-block w-1.5 h-10 ml-1 bg-warning animate-blink align-middle" />
             </h1>
           ) : (
             <div className="space-y-1 animate-fadeIn">
-              <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight">
+              <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-foreground tracking-tight">
                 Hello,{' '}
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FFB77D] to-[#FDBA74]">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-warning to-warning">
                   {officerName}
                 </span>
               </h1>
@@ -106,18 +106,18 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, onComp
             showSubtitle ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
           }`}
         >
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#131B2E] border border-[#222A3D] text-xs font-mono text-[#ADC8F5]">
-            <Sparkles className="w-3.5 h-3.5 text-[#FFB77D]" />
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-card border border-border text-xs font-mono text-primary-text">
+            <Sparkles className="w-3.5 h-3.5 text-warning" />
             <span>SUMMONS MITRA • COMMAND TERMINAL ACTIVE</span>
           </div>
 
-          <p className="text-xs text-[#8F9097] max-w-md mx-auto">
+          <p className="text-xs text-muted-foreground max-w-md mx-auto">
             {user.rank} • {user.policeStation} • {user.district}
           </p>
 
           {/* Micro loader progress */}
-          <div className="w-48 h-1 bg-[#1E293B] rounded-full mx-auto overflow-hidden mt-4">
-            <div className="h-full bg-gradient-to-r from-[#2F4A70] to-[#FFB77D] rounded-full animate-indeterminate" />
+          <div className="w-48 h-1 bg-muted rounded-full mx-auto overflow-hidden mt-4">
+            <div className="h-full bg-gradient-to-r from-primary-btn to-warning rounded-full animate-indeterminate" />
           </div>
         </div>
 
@@ -125,7 +125,7 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, onComp
         <div className="pt-6">
           <button
             onClick={handleSkip}
-            className="text-xs text-[#8F9097] hover:text-white flex items-center gap-1 mx-auto transition-colors cursor-pointer"
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto transition-colors cursor-pointer"
           >
             <span>Click anywhere to enter dashboard</span>
             <ArrowRight className="w-3.5 h-3.5" />

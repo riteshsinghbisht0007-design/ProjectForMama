@@ -4,9 +4,12 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
-import { MongoClient, ServerApiVersion } from 'mongodb';
+import { MongoClient, ServerApiVersion, ObjectId } from 'mongodb';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
 
 // Initialize Firebase Admin for secure token verification
 if (!getApps().length) {
@@ -43,6 +46,12 @@ for (const envFile of ['.env', '.env.local']) {
   }
 }
 
+// Fallback for development environments if JWT_SECRET is not set
+if (!process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = 'dev_fallback_secret_for_summon_mitra_2026';
+  console.warn('[Auth] Warning: Using fallback JWT_SECRET. Please set JWT_SECRET in production.');
+}
+
 // Helper to retrieve Gemini API key across environment variables
 function getGeminiApiKey(): string | undefined {
   const key =
@@ -65,99 +74,33 @@ async function startServer() {
   console.info(`[Server] Starting SummonMitra backend in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode...`);
 
   // --- MongoDB Setup ---
-  console.warn('[AI Studio] Database not connected — using in-memory mock');
-  const store = new Map<string, any>();
-  const genId = () => Math.random().toString(36).substring(2, 9);
-  
-  let mongoClient: any = true;
-  let db: any = {
-    command: async () => ({ ok: 1 }),
-    collection: (name: string) => ({
-      find: (query: any) => ({
-        toArray: async () => {
-          const res = [];
-          for (const [k, v] of store.entries()) {
-            if (k.startsWith(name + ':')) {
-              let matches = true;
-              if (query) {
-                for (const q in query) {
-                  if (v[q] !== query[q]) {
-                    matches = false;
-                    break;
-                  }
-                }
-              }
-              if (matches) res.push(v);
-            }
-          }
-          return res;
+  let mongoClient: MongoClient | null = null;
+  let db: any = null;
+
+  try {
+    if (process.env.MONGODB_URI) {
+      console.info('[Server] Connecting to MongoDB...');
+      mongoClient = new MongoClient(process.env.MONGODB_URI, {
+        serverApi: {
+          version: ServerApiVersion.v1,
+          strict: true,
+          deprecationErrors: true,
         }
-      }),
-      findOne: async (query: any) => {
-        for (const [k, v] of store.entries()) {
-          if (k.startsWith(name + ':')) {
-            let matches = true;
-            if (query) {
-              for (const q in query) {
-                if (v[q] !== query[q]) {
-                  matches = false;
-                  break;
-                }
-              }
-            }
-            if (matches) return v;
-          }
-        }
-        return null;
-      },
-      insertOne: async (doc: any) => {
-        const _id = doc._id || genId();
-        const newDoc = { ...doc, _id };
-        store.set(`${name}:${_id}`, newDoc);
-        return { insertedId: _id };
-      },
-      updateOne: async (query: any, update: any) => {
-        for (const [k, v] of store.entries()) {
-          if (k.startsWith(name + ':')) {
-            let matches = true;
-            if (query) {
-              for (const q in query) {
-                if (v[q] !== query[q]) {
-                  matches = false;
-                  break;
-                }
-              }
-            }
-            if (matches) {
-              store.set(k, { ...v, ...update.$set });
-              return { matchedCount: 1, modifiedCount: 1 };
-            }
-          }
-        }
-        return { matchedCount: 0, modifiedCount: 0 };
-      },
-      deleteOne: async (query: any) => {
-        for (const [k, v] of store.entries()) {
-          if (k.startsWith(name + ':')) {
-            let matches = true;
-            if (query) {
-              for (const q in query) {
-                if (v[q] !== query[q]) {
-                  matches = false;
-                  break;
-                }
-              }
-            }
-            if (matches) {
-              store.delete(k);
-              return { deletedCount: 1 };
-            }
-          }
-        }
-        return { deletedCount: 0 };
-      }
-    })
-  };
+      });
+      await mongoClient.connect();
+      db = mongoClient.db(process.env.MONGODB_DB_NAME || 'summonsviewer');
+      console.info(`[Server] MongoDB connected successfully to database: ${db.databaseName}`);
+      
+      // Setup unique indexes
+      await db.collection('users').createIndex({ email: 1 }, { unique: true });
+      await db.collection('summons').createIndex({ userId: 1 });
+      await db.collection('witnesses').createIndex({ userId: 1 });
+    } else {
+      console.error('[Server] MONGODB_URI is not defined. Authentication and database features will fail.');
+    }
+  } catch (err) {
+    console.error('[Server] Failed to connect to MongoDB:', err);
+  }
   // ---------------------
 
   // Robust CORS configuration for preview iframe, localhost, and public shared domains
@@ -173,6 +116,7 @@ async function startServer() {
   // Large payload limits for high-resolution document scans and PDFs (up to 50MB)
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(cookieParser());
 
   // 1. General Health Check
   app.get('/api/health', (_req, res) => {
@@ -229,31 +173,209 @@ async function startServer() {
 
   // Authentication Middleware (Strict token validation)
   const requireAuth = async (req: any, res: any, next: any) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
-    }
-    const token = authHeader.split(' ')[1];
-    if (!token || token.trim() === '') {
-      return res.status(401).json({ error: 'Unauthorized: Empty token' });
-    }
+    let cookieToken = req.cookies?.auth_token;
+    let bearerToken = null;
     
-    // Support for the existing frontend local mock users (usr_ prefix) during development
-    if (token.startsWith('usr_')) {
-      req.user = { uid: token };
-      return next();
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      bearerToken = req.headers.authorization.split(' ')[1];
     }
 
-    // Production Firebase JWT verification
+    const token = bearerToken || cookieToken;
+
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+
     try {
-      const decodedToken = await getAuth().verifyIdToken(token);
-      req.user = { uid: decodedToken.uid };
+      // 1. Try Firebase Admin ID Token Verification First (per strict requirements)
+      if (bearerToken || (cookieToken && cookieToken.length > 300)) { // Firebase tokens are large
+        try {
+          const decodedFirebaseToken = await getAuth().verifyIdToken(token);
+          req.user = { uid: decodedFirebaseToken.uid, _id: null };
+          return next();
+        } catch (firebaseErr) {
+          // If it fails to verify as Firebase token, fallback to local JWT verification
+        }
+      }
+
+      // 2. Verify local JWT Session
+      if (!process.env.JWT_SECRET) {
+        throw new Error('JWT_SECRET is missing');
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
+      req.user = { uid: decoded.firebaseUid || decoded.userId, _id: decoded.userId };
       next();
     } catch (error) {
       console.error('[Auth] Token verification failed:', error);
-      return res.status(401).json({ error: 'Unauthorized: Invalid token signature' });
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
   };
+
+  // --- Auth Endpoints ---
+
+  const setAuthCookie = (res: any, token: string) => {
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: true, // Always true in AI Studio (HTTPS)
+      sameSite: 'none', // Required for cross-origin iframes
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+  };
+
+  app.post('/api/auth/register', async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
+
+    try {
+      const { email, password, name, badgeNumber, policeStation, district, rank } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+
+      const existingUser = await db.collection('users').findOne({ email: email.toLowerCase() });
+      if (existingUser) {
+        return res.status(409).json({ error: 'An account with this email already exists' });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      const newUser = {
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        displayName: name || email.split('@')[0],
+        badgeNumber: badgeNumber || '',
+        policeStation: policeStation || '',
+        district: district || '',
+        rank: rank || 'Officer',
+        authProvider: 'local',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      const result = await db.collection('users').insertOne(newUser);
+      
+      const token = jwt.sign({ userId: result.insertedId.toString() }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      setAuthCookie(res, token);
+      
+      delete (newUser as any).password;
+      res.status(201).json({ user: { ...newUser, uid: result.insertedId.toString() } });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/auth/login', async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
+
+    try {
+      const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+
+      const user = await db.collection('users').findOne({ email: email.toLowerCase() });
+      if (!user || !user.password) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      const token = jwt.sign({ userId: user._id.toString(), firebaseUid: user.providerId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      setAuthCookie(res, token);
+      
+      delete user.password;
+      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/auth/social', async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
+
+    try {
+      const { idToken, provider } = req.body;
+      if (!idToken) return res.status(400).json({ error: 'Firebase ID Token is required' });
+
+      // Verify Firebase ID Token
+      const decodedToken = await getAuth().verifyIdToken(idToken);
+      const email = decodedToken.email ? decodedToken.email.toLowerCase() : null;
+      const uid = decodedToken.uid;
+      
+      let user = null;
+      if (email) {
+        user = await db.collection('users').findOne({
+          $or: [{ providerId: uid }, { email: email }]
+        });
+      } else {
+        user = await db.collection('users').findOne({ providerId: uid });
+      }
+      
+      if (!user) {
+        // Create new user from social login
+        const newUser = {
+          email: email,
+          displayName: decodedToken.name || (email ? email.split('@')[0] : 'Officer'),
+          photoURL: decodedToken.picture || null,
+          authProvider: provider || 'oauth',
+          providerId: uid,
+          badgeNumber: '',
+          policeStation: '',
+          district: '',
+          rank: 'Officer',
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        const result = await db.collection('users').insertOne(newUser);
+        user = { ...newUser, _id: result.insertedId };
+      } else {
+        // Update existing user's last login
+        await db.collection('users').updateOne(
+          { _id: user._id },
+          { $set: { updatedAt: new Date() } }
+        );
+      }
+
+      const token = jwt.sign({ userId: user._id.toString(), firebaseUid: user.providerId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      setAuthCookie(res, token);
+      
+      delete user.password;
+      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+    } catch (err: any) {
+      console.error('[Auth] Social login error:', err);
+      res.status(401).json({ error: 'Invalid social authentication token' });
+    }
+  });
+
+  app.post('/api/auth/logout', (req: any, res: any) => {
+    res.clearCookie('auth_token', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none'
+    });
+    res.json({ success: true });
+  });
+
+  app.get('/api/auth/me', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const user = await db.collection('users').findOne({ _id: new ObjectId(req.user._id) });
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      delete user.password;
+      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // --- Summons Endpoints ---
   app.get('/api/summons', requireAuth, async (req: any, res: any) => {
@@ -378,8 +500,8 @@ async function startServer() {
       status: 'ok',
       service: 'judicial-ocr',
       ocrAvailable: isConfigured,
-      primaryModel: 'gemini-3.1-flash-lite',
-      fallbackModels: ['gemini-3.8-flash', 'gemini-flash-latest'],
+      primaryModel: 'gemini-3.8-flash',
+      fallbackModels: ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-image'],
       configured: isConfigured,
       timestamp: new Date().toISOString(),
     });
@@ -407,19 +529,30 @@ async function startServer() {
         });
       }
 
+      // Trust the data URL's mime type if available
+      let actualMime = mimeType || 'image/jpeg';
+      if (image.startsWith('data:')) {
+        const extractedMime = image.split(';')[0].split(':')[1];
+        if (extractedMime) {
+          actualMime = extractedMime;
+        }
+      }
+
       // Strip potential data URL prefix
       const cleanBase64 = image.includes('base64,') ? image.split('base64,')[1] : image;
 
       // Normalize mimeType
-      let normalizedMime = mimeType || 'image/jpeg';
+      let normalizedMime = actualMime.toLowerCase();
       if (normalizedMime.includes('pdf')) {
         normalizedMime = 'application/pdf';
       } else if (normalizedMime.includes('png')) {
         normalizedMime = 'image/png';
       } else if (normalizedMime.includes('webp')) {
         normalizedMime = 'image/webp';
+      } else if (normalizedMime.includes('heic') || normalizedMime.includes('heif')) {
+        normalizedMime = 'image/heic';
       } else {
-        normalizedMime = 'image/jpeg';
+        normalizedMime = 'image/jpeg'; // fallback
       }
 
       console.info(
@@ -449,7 +582,7 @@ Analyze this court summon or warrant document image or PDF and extract all factu
 }
 IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegible in the document, set it to an empty string "". Never invent fictional names or addresses.`;
 
-      const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-image'];
       let response: any = null;
       let lastModelError: any = null;
 

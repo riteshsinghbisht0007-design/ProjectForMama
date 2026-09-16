@@ -1,5 +1,7 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { OfficerUser } from '../types';
+import { auth, googleProvider, facebookProvider, signInWithPopup, signOut as firebaseSignOut } from '../services/firebase';
 
 interface AuthContextType {
   currentUser: OfficerUser | null;
@@ -27,9 +29,6 @@ interface AuthContextType {
   clearAuthError: () => void;
 }
 
-const STORAGE_KEY_USER = 'summons_mitra_current_user';
-const STORAGE_KEY_OFFICERS = 'summons_mitra_registered_officers';
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -39,122 +38,95 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearAuthError = () => setAuthError(null);
 
-  // Helper: Persist session locally and to state immediately
-  const saveSession = (user: OfficerUser) => {
-    setCurrentUser(user);
-    try {
-      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    } catch {
-      // Ignored
-    }
-  };
-
-  // 1. Instant local session restoration
+  // Load user session on mount
   useEffect(() => {
-    const local = localStorage.getItem(STORAGE_KEY_USER);
-    if (local) {
+    const fetchUser = async () => {
       try {
-        const parsed = JSON.parse(local) as OfficerUser;
-        setCurrentUser(parsed);
-      } catch {
-        localStorage.removeItem(STORAGE_KEY_USER);
+        const response = await fetch('/api/auth/me', { credentials: 'include' });
+        if (response.ok) {
+          const data = await response.json();
+          setCurrentUser(data.user);
+        } else {
+          setCurrentUser(null);
+        }
+      } catch (err) {
+        console.error("Failed to fetch user session:", err);
         setCurrentUser(null);
+      } finally {
+        setIsLoading(false);
       }
-    } else {
-      setCurrentUser(null);
-    }
-    setIsLoading(false);
+    };
+    fetchUser();
   }, []);
 
-  // 2. Instant Google Sign-In (0ms local save)
-  const loginWithGoogle = async () => {
+  const handleSocialLogin = async (provider: any, providerName: string) => {
     setIsLoading(true);
     setAuthError(null);
-
-    const googleUser: OfficerUser = {
-      uid: 'usr_g_' + Date.now().toString(36),
-      email: 'chetna2manju@gmail.com',
-      displayName: 'Sub-Insp. Rajesh Sharma',
-      badgeNumber: 'DL-POL-4402',
-      policeStation: 'Connaught Place PS',
-      district: 'Central District, Delhi',
-      rank: 'Sub-Inspector',
-      authProvider: 'google',
-      photoURL:
-        'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    };
-    saveSession(googleUser);
-    setIsLoading(false);
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const idToken = await result.user.getIdToken();
+      
+      const response = await fetch('/api/auth/social', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, provider: providerName })
+      });
+      
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Social login failed on server');
+      }
+      
+      const data = await response.json();
+      setCurrentUser(data.user);
+    } catch (err: any) {
+      setAuthError(err.message || `${providerName} login failed`);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // 3. Instant Facebook Sign-In (0ms local save)
-  const loginWithFacebook = async () => {
-    setIsLoading(true);
-    setAuthError(null);
+  const loginWithGoogle = () => handleSocialLogin(googleProvider, 'google');
+  const loginWithFacebook = () => handleSocialLogin(facebookProvider, 'facebook');
 
-    const fbUser: OfficerUser = {
-      uid: 'usr_fb_' + Date.now().toString(36),
-      email: 'officer.fb@delhipolice.gov.in',
-      displayName: 'Insp. Vikram Rathore',
-      badgeNumber: 'DL-POL-7821',
-      policeStation: 'Cyber Crime Division',
-      district: 'Central District',
-      rank: 'Inspector',
-      authProvider: 'facebook',
-      photoURL:
-        'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-    };
-    saveSession(fbUser);
-    setIsLoading(false);
-  };
-
-  // 4. Instant Officer Credentials Login
   const loginWithCredentials = async (
     emailOrBadge: string,
-    _password: string,
-    initialProfile?: Partial<OfficerUser>
+    password: string
   ): Promise<boolean> => {
     setIsLoading(true);
     setAuthError(null);
-
+    
+    // Quick parse - if they enter a badge, convert to email assuming domain
     const email = emailOrBadge.includes('@')
       ? emailOrBadge.trim()
       : `${emailOrBadge.trim().toLowerCase()}@delhipolice.gov.in`;
-
-    // Check registered officers in local storage
-    const registeredJson = localStorage.getItem(STORAGE_KEY_OFFICERS);
-    const registered: OfficerUser[] = registeredJson ? JSON.parse(registeredJson) : [];
-
-    const found = registered.find(
-      (u) =>
-        u.email.toLowerCase() === email.toLowerCase() ||
-        u.badgeNumber.toLowerCase() === emailOrBadge.toLowerCase()
-    );
-
-    if (found) {
-      saveSession(found);
-      setIsLoading(false);
+      
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Invalid credentials');
+      }
+      
+      const data = await response.json();
+      setCurrentUser(data.user);
       return true;
+    } catch (err: any) {
+      setAuthError(err.message);
+      throw err;
+    } finally {
+      setIsLoading(false);
     }
-
-    // Default authorized officer record
-    const defaultOfficer: OfficerUser = {
-      uid: 'usr_badge_' + emailOrBadge.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase(),
-      email,
-      displayName: initialProfile?.displayName || 'Insp. Rakesh Sharma',
-      badgeNumber: initialProfile?.badgeNumber || emailOrBadge.toUpperCase(),
-      policeStation: initialProfile?.policeStation || 'PS Tis Hazari',
-      district: initialProfile?.district || 'Central District',
-      rank: initialProfile?.rank || 'Inspector',
-      authProvider: 'password',
-    };
-
-    saveSession(defaultOfficer);
-    setIsLoading(false);
-    return true;
   };
 
-  // 5. Instant Officer Registration
   const registerOfficer = async (
     name: string,
     badgeNumber: string,
@@ -162,49 +134,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     policeStation: string,
     district: string,
     rank: string,
-    _password: string
+    password: string
   ): Promise<boolean> => {
     setIsLoading(true);
     setAuthError(null);
-
-    const newOfficer: OfficerUser = {
-      uid: 'usr_' + Date.now().toString(36),
-      email,
-      displayName: name,
-      badgeNumber: badgeNumber.toUpperCase(),
-      policeStation,
-      district,
-      rank,
-      authProvider: 'password',
-    };
-
-    const registeredJson = localStorage.getItem(STORAGE_KEY_OFFICERS);
-    const registered: OfficerUser[] = registeredJson ? JSON.parse(registeredJson) : [];
-    registered.push(newOfficer);
-    localStorage.setItem(STORAGE_KEY_OFFICERS, JSON.stringify(registered));
-
-    saveSession(newOfficer);
-    setIsLoading(false);
-    return true;
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, badgeNumber, email, policeStation, district, rank, password })
+      });
+      
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Registration failed');
+      }
+      
+      const data = await response.json();
+      setCurrentUser(data.user);
+      return true;
+    } catch (err: any) {
+      setAuthError(err.message);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // 6. Instant Password Reset
-  const resetPassword = async (_email: string): Promise<boolean> => {
+  const resetPassword = async (email: string): Promise<boolean> => {
     setAuthError(null);
+    // Not implemented on backend yet, but simulated for now
     return true;
   };
 
-  // 7. Instant Logout
   const logout = async () => {
-    localStorage.removeItem(STORAGE_KEY_USER);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await firebaseSignOut(auth).catch(() => {});
+    } catch (err) {
+      console.error("Logout error", err);
+    }
     setCurrentUser(null);
+    window.location.href = '/';
   };
 
-  // 8. Instant Update Profile
   const updateOfficerProfile = async (updates: Partial<OfficerUser>) => {
+    // In a real app this would POST to /api/users/profile
     if (!currentUser) return;
-    const updated = { ...currentUser, ...updates };
-    saveSession(updated);
+    setCurrentUser({ ...currentUser, ...updates });
   };
 
   return (

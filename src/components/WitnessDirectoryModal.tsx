@@ -182,23 +182,23 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-[#0B1326] border border-[#222A3D] rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="bg-[#0A192F] border-b border-[#222A3D] px-6 py-4 flex items-center justify-between">
+        <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-[#2F4A70] text-[#ADC8F5]">
+            <div className="p-2 rounded-lg bg-primary-btn text-white">
               <Shield className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Witness & People Directory</h2>
-              <p className="text-xs text-[#8F9097]">
+              <h2 className="text-lg font-bold text-foreground">Witness & People Directory</h2>
+              <p className="text-xs text-muted-foreground">
                 Manage witnesses, accused, sureties, and service acknowledgments
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#8F9097] hover:text-white hover:bg-[#1E293B] transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -211,20 +211,20 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
               {/* Actions Bar */}
               <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
                 <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-[#8F9097] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search by name, phone, address, case no…"
-                    className="w-full pl-10 pr-4 py-2.5 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white placeholder-[#606778] focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full pl-10 pr-4 py-2.5 bg-card border border-border rounded-xl text-xs text-foreground placeholder-muted-foreground focus:border-primary-text focus:outline-none"
                   />
                 </div>
 
                 <button
                   type="button"
                   onClick={handleOpenAdd}
-                  className="px-4 py-2.5 bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow transition-colors cursor-pointer shrink-0"
+                  className="px-4 py-2.5 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow transition-colors cursor-pointer shrink-0"
                 >
                   <Plus className="w-4 h-4" /> Add Someone
                 </button>
@@ -240,8 +240,8 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                       onClick={() => setRoleFilter(r)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                         roleFilter === r
-                          ? 'bg-[#FFB77D] text-[#2F1500] font-bold'
-                          : 'bg-[#131B2E] text-[#8F9097] hover:text-white border border-[#222A3D]'
+                          ? 'bg-warning text-warning-muted font-bold'
+                          : 'bg-card text-muted-foreground hover:text-foreground border border-border'
                       }`}
                     >
                       {r}
@@ -252,14 +252,14 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
 
               {/* List of Persons */}
               {isLoadingWitnesses ? (
-                <div className="py-16 text-center text-xs text-[#8F9097]">
+                <div className="py-16 text-center text-xs text-muted-foreground">
                   Loading directory records from Firestore…
                 </div>
               ) : filteredWitnesses.length === 0 ? (
-                <div className="py-16 text-center space-y-3 bg-[#131B2E] border border-[#222A3D] rounded-2xl p-8">
-                  <Shield className="w-10 h-10 text-[#8F9097] mx-auto opacity-40" />
-                  <h4 className="text-sm font-bold text-white">No Records Found</h4>
-                  <p className="text-xs text-[#8F9097] max-w-sm mx-auto">
+                <div className="py-16 text-center space-y-3 bg-card border border-border rounded-2xl p-8">
+                  <Shield className="w-10 h-10 text-muted-foreground mx-auto opacity-40" />
+                  <h4 className="text-sm font-bold text-foreground">No Records Found</h4>
+                  <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                     {witnesses.length === 0
                       ? 'No witnesses or accused persons registered yet. Click "Add Someone" to record a new person.'
                       : 'No directory records matched your search query.'}
@@ -267,7 +267,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   <button
                     type="button"
                     onClick={handleOpenAdd}
-                    className="px-4 py-2 bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer"
+                    className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer"
                   >
                     <Plus className="w-4 h-4" /> Add Someone Now
                   </button>
@@ -277,14 +277,14 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   {filteredWitnesses.map((w) => (
                     <div
                       key={w.id}
-                      className="p-4 bg-[#131B2E] border border-[#222A3D] hover:border-[#39475F] rounded-2xl space-y-3 transition-all flex flex-col justify-between"
+                      className="p-4 bg-card border border-border hover:border-border-strong rounded-2xl space-y-3 transition-all flex flex-col justify-between"
                     >
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <span className="font-bold text-white text-sm block">{w.name}</span>
+                            <span className="font-bold text-foreground text-sm block">{w.name}</span>
                             {w.fatherName && (
-                              <span className="text-xs text-[#8F9097] block">s/o {w.fatherName}</span>
+                              <span className="text-xs text-muted-foreground block">s/o {w.fatherName}</span>
                             )}
                           </div>
                           <span
@@ -293,43 +293,43 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                                 ? 'bg-blue-950 text-blue-300 border border-blue-800'
                                 : w.role === 'Accused'
                                 ? 'bg-red-950 text-red-300 border border-red-800'
-                                : 'bg-[#2B1300] text-[#FFB77D] border border-[#FFB77D]/30'
+                                : 'bg-warning-muted text-warning border border-warning/30'
                             }`}
                           >
                             {w.role}
                           </span>
                         </div>
 
-                        <div className="space-y-1.5 text-xs text-[#C5C6CD]">
+                        <div className="space-y-1.5 text-xs text-foreground-alt">
                           <div className="flex items-start gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-[#FFB77D] shrink-0 mt-0.5" />
+                            <MapPin className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
                             <span className="line-clamp-2">{w.address}</span>
                           </div>
 
                           {w.phone && (
-                            <div className="flex items-center gap-1.5 font-mono text-[#ADC8F5]">
+                            <div className="flex items-center gap-1.5 font-mono text-primary-text">
                               <Phone className="w-3.5 h-3.5 shrink-0" />
                               <span>{w.phone}</span>
                             </div>
                           )}
 
                           {w.idProofNumber && (
-                            <div className="flex items-center gap-1.5 text-[11px] text-[#8F9097]">
+                            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                               <FileText className="w-3.5 h-3.5 shrink-0" />
                               <span>
-                                {w.idProofType}: <span className="font-mono text-white">{w.idProofNumber}</span>
+                                {w.idProofType}: <span className="font-mono text-foreground">{w.idProofNumber}</span>
                               </span>
                             </div>
                           )}
 
                           {w.summonCaseNo && (
-                            <div className="text-[11px] text-[#FFB77D]">
+                            <div className="text-[11px] text-warning">
                               Linked Case: <span className="font-mono">{w.summonCaseNo}</span>
                             </div>
                           )}
 
                           {w.statementSummary && (
-                            <p className="text-[11px] italic text-[#8F9097] bg-[#0B1326] p-2 rounded-lg border border-[#222A3D]">
+                            <p className="text-[11px] italic text-muted-foreground bg-background p-2 rounded-lg border border-border">
                               "{w.statementSummary}"
                             </p>
                           )}
@@ -337,13 +337,13 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                       </div>
 
                       {/* Card Action Buttons */}
-                      <div className="pt-2 border-t border-[#222A3D] flex items-center justify-between gap-1">
+                      <div className="pt-2 border-t border-border flex items-center justify-between gap-1">
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
                             onClick={() => handleCopy(w)}
                             title="Copy formatted dispatch text"
-                            className="p-1.5 rounded-lg hover:bg-[#1E293B] text-[#8F9097] hover:text-white transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                           >
                             {copiedId === w.id ? (
                               <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -355,7 +355,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                             type="button"
                             onClick={() => handleForward(w)}
                             title="Forward via WhatsApp / Device Share"
-                            className="p-1.5 rounded-lg hover:bg-[#1E293B] text-[#ADC8F5] hover:text-white transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg hover:bg-muted text-primary-text hover:text-foreground transition-colors cursor-pointer"
                           >
                             <Share2 className="w-3.5 h-3.5" />
                           </button>
@@ -365,7 +365,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(w)}
-                            className="p-1.5 rounded-lg hover:bg-[#1E293B] text-[#DAE2FD] hover:text-white transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg hover:bg-muted text-foreground hover:text-foreground transition-colors cursor-pointer"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -386,15 +386,15 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
           ) : (
             /* Comprehensive Add / Edit Person Form */
             <form onSubmit={handleSave} className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-[#222A3D]">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <User className="w-4 h-4 text-[#FFB77D]" />
+              <div className="flex items-center justify-between pb-2 border-b border-border">
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <User className="w-4 h-4 text-warning" />
                   <span>{editingId ? 'Edit Person Particulars' : 'Register New Person / Witness'}</span>
                 </h3>
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="text-xs text-[#8F9097] hover:text-white underline cursor-pointer"
+                  className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
                 >
                   Cancel & Return
                 </button>
@@ -402,7 +402,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Full Legal Name *
                   </label>
                   <input
@@ -411,12 +411,12 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Ramesh Chandra Verma"
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Father's / Spouse's Name
                   </label>
                   <input
@@ -424,18 +424,18 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                     value={fatherName}
                     onChange={(e) => setFatherName(e.target.value)}
                     placeholder="e.g. Late Shri Om Prakash"
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Role in Legal Proceedings *
                   </label>
                   <select
                     value={role}
                     onChange={(e) => setRole(e.target.value as WitnessRole)}
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none"
                   >
                     <option value="Witness">Witness</option>
                     <option value="Accused">Accused Person</option>
@@ -447,7 +447,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Contact Phone Number
                   </label>
                   <input
@@ -455,13 +455,13 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+91 98765 43210"
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none font-mono"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                <label className="text-xs font-medium text-muted-foreground block mb-1">
                   Complete Residential / Serving Address *
                 </label>
                 <textarea
@@ -470,35 +470,35 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   placeholder="Plot/Flat number, Street name, Locality, City/Town, Postal PIN Code"
-                  className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none resize-none"
+                  className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none resize-none"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Police Station
                   </label>
                   <input
                     type="text"
                     value={policeStation}
                     onChange={(e) => setPoliceStation(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     District
                   </label>
                   <input
                     type="text"
                     value={district}
                     onChange={(e) => setDistrict(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     Linked Case / FIR # (Optional)
                   </label>
                   <input
@@ -506,20 +506,20 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                     value={summonCaseNo}
                     onChange={(e) => setSummonCaseNo(e.target.value)}
                     placeholder="FIR #420/2024"
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none font-mono"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none font-mono"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     ID Proof Document Type
                   </label>
                   <select
                     value={idProofType}
                     onChange={(e) => setIdProofType(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none"
                   >
                     <option value="Aadhaar Card">Aadhaar Card (UID)</option>
                     <option value="Voter ID (EPIC)">Voter ID (EPIC)</option>
@@ -531,7 +531,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">
                     ID Document Reference Number
                   </label>
                   <input
@@ -539,13 +539,13 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                     value={idProofNumber}
                     onChange={(e) => setIdProofNumber(e.target.value)}
                     placeholder="e.g. XXXX-XXXX-1234"
-                    className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none font-mono"
+                    className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-medium text-[#8F9097] block mb-1">
+                <label className="text-xs font-medium text-muted-foreground block mb-1">
                   Statement Summary / Service Remarks
                 </label>
                 <textarea
@@ -553,22 +553,22 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   value={statementSummary}
                   onChange={(e) => setStatementSummary(e.target.value)}
                   placeholder="Record summary of statement or conditions under which summons/notice was served..."
-                  className="w-full px-3.5 py-2 bg-[#131B2E] border border-[#222A3D] rounded-xl text-xs text-white focus:border-[#ADC8F5] focus:outline-none resize-none"
+                  className="w-full px-3.5 py-2 bg-card border border-border rounded-xl text-xs text-foreground focus:border-primary-text focus:outline-none resize-none"
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-3 border-t border-[#222A3D]">
+              <div className="flex justify-end gap-3 pt-3 border-t border-border">
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="px-4 py-2 border border-[#222A3D] hover:bg-[#1E293B] text-xs font-medium text-[#DAE2FD] rounded-xl transition-colors cursor-pointer"
+                  className="px-4 py-2 border border-border hover:bg-muted text-xs font-medium text-foreground rounded-xl transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="px-6 py-2 bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs rounded-xl shadow transition-colors cursor-pointer disabled:opacity-50"
+                  className="px-6 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl shadow transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isSaving ? 'Saving…' : editingId ? 'Update Particulars' : 'Save to Directory'}
                 </button>

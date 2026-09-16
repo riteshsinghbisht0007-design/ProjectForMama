@@ -33,23 +33,23 @@ export const UrgentAlertsModal: React.FC<UrgentAlertsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-[#0B1326] border border-[#222A3D] rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
         {/* Header */}
-        <div className="bg-[#0A192F] border-b border-[#222A3D] px-6 py-4 flex items-center justify-between">
+        <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-red-950/80 text-red-400 border border-red-800">
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Judicial Priority Alerts</h2>
-              <p className="text-xs text-[#8F9097]">
+              <h2 className="text-lg font-bold text-foreground">Judicial Priority Alerts</h2>
+              <p className="text-xs text-muted-foreground">
                 Overdue, today, and critical court appearances
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#8F9097] hover:text-white hover:bg-[#1E293B] transition-colors"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -58,11 +58,11 @@ export const UrgentAlertsModal: React.FC<UrgentAlertsModalProps> = ({
         {/* Content */}
         <div className="p-6 overflow-y-auto space-y-3">
           {alertSummons.length === 0 ? (
-            <div className="py-12 text-center text-[#8F9097] space-y-2">
-              <div className="w-10 h-10 mx-auto rounded-full bg-[#131B2E] flex items-center justify-center text-emerald-400">
+            <div className="py-12 text-center text-muted-foreground space-y-2">
+              <div className="w-10 h-10 mx-auto rounded-full bg-card flex items-center justify-center text-emerald-400">
                 <Clock className="w-5 h-5" />
               </div>
-              <p className="text-sm font-medium text-white">No Critical Hearing Alerts</p>
+              <p className="text-sm font-medium text-foreground">No Critical Hearing Alerts</p>
               <p className="text-xs">All scheduled summons are within normal judicial time limits.</p>
             </div>
           ) : (
@@ -77,17 +77,17 @@ export const UrgentAlertsModal: React.FC<UrgentAlertsModalProps> = ({
                     onSelectSummon(summon);
                     onClose();
                   }}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all hover:bg-[#171F33] flex items-center justify-between gap-3 ${
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all hover:bg-card-hover flex items-center justify-between gap-3 ${
                     isOverdue
                       ? 'bg-red-950/30 border-red-800/60'
                       : isToday
                       ? 'bg-amber-950/30 border-amber-800/60'
-                      : 'bg-[#131B2E] border-[#222A3D]'
+                      : 'bg-card border-border'
                   }`}
                 >
                   <div className="space-y-1 min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-white">
+                      <span className="font-mono text-xs font-bold text-foreground">
                         {summon.summonNumber}
                       </span>
                       <span
@@ -103,16 +103,16 @@ export const UrgentAlertsModal: React.FC<UrgentAlertsModalProps> = ({
                       </span>
                     </div>
 
-                    <h4 className="text-sm font-bold text-[#DAE2FD] truncate">
+                    <h4 className="text-sm font-bold text-foreground truncate">
                       {summon.personName}
                     </h4>
 
-                    <p className="text-xs text-[#8F9097] truncate">
+                    <p className="text-xs text-muted-foreground truncate">
                       {summon.courtName} • Hearing: {summon.hearingDate}
                     </p>
                   </div>
 
-                  <ArrowRight className="w-4 h-4 text-[#8F9097] shrink-0" />
+                  <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
                 </div>
               );
             })

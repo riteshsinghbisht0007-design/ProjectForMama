@@ -220,7 +220,7 @@ export const inspectOcrHealth = async (): Promise<{
   message: string;
 }> => {
   try {
-    const res = await fetch('/api/ocr/health', { method: 'GET' });
+    const res = await fetch('/api/ocr/health', { method: 'GET', credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       return {
@@ -266,10 +266,11 @@ export const scanSummonDocument = async (
 
   // 45-second timeout controller for mobile cellular network resilience
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 45000);
+  const timeoutId = setTimeout(() => controller.abort(new Error('Timeout')), 120000);
 
   try {
     const res = await fetch('/api/ocr', {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: payloadDataUrl, mimeType: payloadMime }),
@@ -364,7 +365,7 @@ export const scanSummonDocument = async (
 
     let failMessage = 'Document OCR scan failed.';
     if (err.name === 'AbortError') {
-      failMessage = 'Document OCR timed out after 45 seconds. Please enter details manually.';
+      failMessage = 'Document OCR timed out. The scan took too long. Please enter details manually.';
     } else if (err.message && err.message.includes('Failed to fetch')) {
       failMessage = `Could not connect to OCR server at ${window.location.origin}/api/ocr. Server may still be starting.`;
     } else {

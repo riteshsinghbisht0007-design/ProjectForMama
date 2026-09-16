@@ -1,23 +1,114 @@
 @import "tailwindcss";
 
+@theme {
+  --color-background: var(--background);
+  --color-background-alt: var(--background-alt);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-muted: var(--muted);
+  --color-primary-muted: var(--primary-muted);
+  --color-primary-btn: var(--primary-btn);
+  --color-primary-hover: var(--primary-hover);
+  
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  
+  --color-foreground: var(--foreground);
+  --color-foreground-alt: var(--foreground-alt);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted-foreground-alt: var(--muted-foreground-alt);
+  --color-primary-text: var(--primary-text);
+  --color-primary-text-bright: var(--primary-text-bright);
+  
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+  --color-info-text: var(--info-text);
+  --color-info-muted: var(--info-muted);
+}
+
 @layer base {
+  :root {
+    /* LIGHT MODE */
+    --background: #F8FAFC;
+    --background-alt: #F1F5F9;
+    --card: #FFFFFF;
+    --card-hover: #F8FAFC;
+    --muted: #F1F5F9;
+    --primary-muted: #DBEAFE;
+    --primary-btn: #2563EB;
+    --primary-hover: #1D4ED8;
+    
+    --border: #E2E8F0;
+    --border-strong: #CBD5E1;
+    
+    --foreground: #0F172A;
+    --foreground-alt: #334155;
+    --muted-foreground: #64748B;
+    --muted-foreground-alt: #94A3B8;
+    --primary-text: #1D4ED8;
+    --primary-text-bright: #2563EB;
+    
+    --warning: #D97706;
+    --warning-muted: #FEF3C7;
+    --success: #059669;
+    --success-muted: #D1FAE5;
+    --info-text: #475569;
+    --info-muted: #E0F2FE;
+  }
+  
+  .dark {
+    /* DARK MODE (EXISTING BASELINE) */
+    --background: #0B1326;
+    --background-alt: #0A192F;
+    --card: #131B2E;
+    --card-hover: #171F33;
+    --muted: #1E293B;
+    --primary-muted: #1E3A5F;
+    --primary-btn: #2F4A70;
+    --primary-hover: #3B82F6;
+    
+    --border: #222A3D;
+    --border-strong: #39475F;
+    
+    --foreground: #DAE2FD;
+    --foreground-alt: #C5C6CD;
+    --muted-foreground: #8F9097;
+    --muted-foreground-alt: #5A6072;
+    --primary-text: #ADC8F5;
+    --primary-text-bright: #8BBBFF;
+    
+    --warning: #FFB77D;
+    --warning-muted: #2B1300;
+    --success: #34D399;
+    --success-muted: #064E3B;
+    --info-text: #B9C7E4;
+    --info-muted: #133155;
+  }
+  
   * {
-    border-color: #44474d;
+    border-color: var(--border);
+  }
+  
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
   }
 }
 
-/* Custom scrollbars for high-density police telemetry tables */
+/* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0b1326;
+  background: var(--background);
 }
 ::-webkit-scrollbar-thumb {
-  background: #222a3d;
+  background: var(--border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #2f4a70;
-}
+  background: var(--border-strong);
+}\n

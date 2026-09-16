@@ -75,18 +75,18 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
 
   return (
     <div className="space-y-6">
-      <div className="bg-[#131B2E] border border-[#222A3D] rounded-2xl p-5 shadow-lg">
+      <div className="bg-card border border-border rounded-2xl p-5 shadow-lg">
         {/* Calendar Navigation */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-[#1E293B] text-[#ADC8F5]">
+            <div className="p-2 rounded-lg bg-muted text-primary-text">
               <CalendarIcon className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold text-white text-base">
+              <h3 className="font-bold text-foreground text-base">
                 {monthNames[month]} {year}
               </h3>
-              <p className="text-xs text-[#8F9097]">Judicial Court Hearing Schedules</p>
+              <p className="text-xs text-muted-foreground">Judicial Court Hearing Schedules</p>
             </div>
           </div>
 
@@ -94,20 +94,20 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
             <button
               onClick={prevMonth}
               id="prev-month-btn"
-              className="p-1.5 rounded-lg border border-[#222A3D] hover:bg-[#1E293B] text-[#DAE2FD]"
+              className="p-1.5 rounded-lg border border-border hover:bg-muted text-foreground"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               onClick={() => setCurrentDate(new Date())}
-              className="px-2.5 py-1 text-xs rounded-lg border border-[#222A3D] hover:bg-[#1E293B] text-[#ADC8F5]"
+              className="px-2.5 py-1 text-xs rounded-lg border border-border hover:bg-muted text-primary-text"
             >
               Today
             </button>
             <button
               onClick={nextMonth}
               id="next-month-btn"
-              className="p-1.5 rounded-lg border border-[#222A3D] hover:bg-[#1E293B] text-[#DAE2FD]"
+              className="p-1.5 rounded-lg border border-border hover:bg-muted text-foreground"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -115,7 +115,7 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
         </div>
 
         {/* Days Header */}
-        <div className="grid grid-cols-7 text-center text-xs font-medium text-[#8F9097] pb-2 border-b border-[#222A3D]">
+        <div className="grid grid-cols-7 text-center text-xs font-medium text-muted-foreground pb-2 border-b border-border">
           <span>Sun</span>
           <span>Mon</span>
           <span>Tue</span>
@@ -146,10 +146,10 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
                 onClick={() => setSelectedDateStr(dayStr)}
                 className={`h-10 sm:h-12 rounded-xl flex flex-col items-center justify-center relative transition-all ${
                   isSelected
-                    ? 'bg-[#2F4A70] text-white font-bold ring-2 ring-[#ADC8F5]'
+                    ? 'bg-primary-btn text-white font-bold ring-2 ring-primary-text'
                     : isToday
-                    ? 'bg-[#1E293B] text-[#FFB77D] font-bold border border-[#FFB77D]/40'
-                    : 'hover:bg-[#171F33] text-[#DAE2FD]'
+                    ? 'bg-muted text-warning font-bold border border-warning/40'
+                    : 'hover:bg-card-hover text-foreground'
                 }`}
               >
                 <span className="text-xs sm:text-sm font-mono">{day}</span>
@@ -163,12 +163,12 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
                             ? 'bg-emerald-400'
                             : s.urgency === 'Urgent'
                             ? 'bg-red-400'
-                            : 'bg-[#FFB77D]'
+                            : 'bg-warning'
                         }`}
                       />
                     ))}
                     {daySummons.length > 3 && (
-                      <span className="text-[8px] text-[#ADC8F5] leading-none">+</span>
+                      <span className="text-[8px] text-primary-text leading-none">+</span>
                     )}
                   </div>
                 )}
@@ -179,16 +179,16 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
       </div>
 
       {/* Selected Date Summary & Docket List */}
-      <div className="bg-[#131B2E] border border-[#222A3D] rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between border-b border-[#222A3D] pb-3">
+      <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+        <div className="flex items-center justify-between border-b border-border pb-3">
           <div>
             <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#FFB77D]" />
-              <h4 className="font-bold text-white text-sm">
-                Hearings on: <span className="font-mono text-[#ADC8F5]">{selectedDateStr}</span>
+              <Clock className="w-4 h-4 text-warning" />
+              <h4 className="font-bold text-foreground text-sm">
+                Hearings on: <span className="font-mono text-primary-text">{selectedDateStr}</span>
               </h4>
             </div>
-            <p className="text-xs text-[#8F9097] mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               {selectedDateSummons.length} summon(s) scheduled for this court date
             </p>
           </div>
@@ -196,14 +196,14 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
           <button
             onClick={() => onAddSummonForDate(selectedDateStr)}
             id="add-summon-for-date-btn"
-            className="px-3 py-1.5 bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+            className="px-3 py-1.5 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" /> Add for this Date
           </button>
         </div>
 
         {selectedDateSummons.length === 0 ? (
-          <div className="py-8 text-center text-[#8F9097] text-xs">
+          <div className="py-8 text-center text-muted-foreground text-xs">
             No court appearances or summons returnable on {selectedDateStr}.
           </div>
         ) : (
@@ -212,30 +212,30 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
               <div
                 key={s.id}
                 onClick={() => onSelectSummon(s)}
-                className="p-3.5 bg-[#0B1326] border border-[#222A3D] hover:border-[#39475F] rounded-xl cursor-pointer transition-colors space-y-2"
+                className="p-3.5 bg-background border border-border hover:border-border-strong rounded-xl cursor-pointer transition-colors space-y-2"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold text-white">{s.summonNumber}</span>
+                  <span className="font-mono text-xs font-bold text-foreground">{s.summonNumber}</span>
                   <span
                     className={`px-2 py-0.5 text-[10px] rounded-full uppercase font-bold ${
                       s.status === 'Completed'
                         ? 'bg-emerald-950 text-emerald-300'
-                        : 'bg-[#2B1300] text-[#FFB77D]'
+                        : 'bg-warning-muted text-warning'
                     }`}
                   >
                     {s.status}
                   </span>
                 </div>
 
-                <div className="text-sm font-bold text-[#DAE2FD]">{s.personName}</div>
+                <div className="text-sm font-bold text-foreground">{s.personName}</div>
 
-                <div className="flex items-center gap-4 text-xs text-[#8F9097]">
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <div className="flex items-center gap-1 truncate">
-                    <Building2 className="w-3 h-3 text-[#B9C7E4]" />
+                    <Building2 className="w-3 h-3 text-info-text" />
                     <span className="truncate">{s.courtName}</span>
                   </div>
                   <div className="flex items-center gap-1 truncate">
-                    <MapPin className="w-3 h-3 text-[#FFB77D]" />
+                    <MapPin className="w-3 h-3 text-warning" />
                     <span className="truncate">{s.policeStation}</span>
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 <!doctype html>
-<html class="dark" lang="en">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -20,8 +20,17 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+  
+    <script>
+      if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+        document.documentElement.classList.remove('dark')
+      } else {
+        document.documentElement.classList.add('dark')
+      }
+    </script>
   </head>
-  <body class="bg-[#0b1326] text-[#dae2fd] font-sans antialiased selection:bg-[#2f4a70] selection:text-[#d5e3ff] min-h-screen">
+
+  <body class="bg-background text-foreground font-sans antialiased selection:bg-primary-btn selection:text-white min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

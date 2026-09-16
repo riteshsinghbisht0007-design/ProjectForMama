@@ -55,7 +55,7 @@ export const SummonCard: React.FC<SummonCardProps> = ({
     <div
       onClick={() => onSelect(summon)}
       id={`summon-card-${summon.id}`}
-      className={`p-4 rounded-xl border transition-all duration-200 cursor-pointer relative overflow-hidden bg-[#131B2E] border-[#222A3D] hover:border-[#39475F] hover:bg-[#171F33] group shadow-sm ${
+      className={`p-4 rounded-xl border transition-all duration-200 cursor-pointer relative overflow-hidden bg-card border-border hover:border-border-strong hover:bg-card-hover group shadow-sm ${
         isDueSoon ? 'ring-1 ring-amber-500/50' : isOverdue ? 'ring-1 ring-red-500/50' : ''
       }`}
     >
@@ -68,7 +68,7 @@ export const SummonCard: React.FC<SummonCardProps> = ({
             ? 'bg-red-500'
             : summon.urgency === 'High' || isDueSoon
             ? 'bg-amber-500'
-            : 'bg-[#3B82F6]'
+            : 'bg-primary-hover'
         }`}
       />
 
@@ -76,10 +76,10 @@ export const SummonCard: React.FC<SummonCardProps> = ({
         {/* Top line: Reference and Status */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-bold text-white tracking-wider">
+            <span className="font-mono text-xs font-bold text-foreground tracking-wider">
               {summon.summonNumber}
             </span>
-            <span className="text-[11px] font-mono text-[#8F9097]">• {summon.caseNumber}</span>
+            <span className="text-[11px] font-mono text-muted-foreground">• {summon.caseNumber}</span>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -99,7 +99,7 @@ export const SummonCard: React.FC<SummonCardProps> = ({
                   ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/50'
                   : summon.status === 'Upcoming'
                   ? 'bg-blue-950 text-blue-300 border border-blue-700/50'
-                  : 'bg-[#2B1300] text-[#FFB77D] border border-[#FFB77D]/40'
+                  : 'bg-warning-muted text-warning border border-warning/40'
               }`}
             >
               {summon.status}
@@ -109,10 +109,10 @@ export const SummonCard: React.FC<SummonCardProps> = ({
 
         {/* Center: Person Name & Father Name */}
         <div>
-          <h3 className="text-base font-bold text-white group-hover:text-[#ADC8F5] transition-colors">
+          <h3 className="text-base font-bold text-foreground group-hover:text-primary-text transition-colors">
             {summon.personName}
             {summon.fatherName && (
-              <span className="text-xs font-normal text-[#8F9097] ml-2">
+              <span className="text-xs font-normal text-muted-foreground ml-2">
                 (S/O {summon.fatherName})
               </span>
             )}
@@ -120,34 +120,34 @@ export const SummonCard: React.FC<SummonCardProps> = ({
         </div>
 
         {/* Complete Address preview */}
-        <div className="flex items-start gap-2 text-xs text-[#DAE2FD] bg-[#0B1326] p-2 rounded-lg border border-[#222A3D]">
-          <MapPin className="w-3.5 h-3.5 text-[#FFB77D] shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-xs text-foreground bg-background p-2 rounded-lg border border-border">
+          <MapPin className="w-3.5 h-3.5 text-warning shrink-0 mt-0.5" />
           <p className="line-clamp-2 text-[11px] leading-relaxed">
-            <span className="font-semibold text-white">Serving Address: </span>
+            <span className="font-semibold text-foreground">Serving Address: </span>
             {summon.address}
           </p>
         </div>
 
         {/* Bottom Court & Hearing Info */}
-        <div className="flex items-center justify-between text-xs text-[#8F9097] pt-1">
+        <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
           <div className="flex items-center gap-1.5 truncate max-w-[50%]">
-            <Building2 className="w-3.5 h-3.5 text-[#B9C7E4] shrink-0" />
+            <Building2 className="w-3.5 h-3.5 text-info-text shrink-0" />
             <span className="truncate">{summon.courtName}</span>
           </div>
 
-          <div className="flex items-center gap-1.5 font-mono text-[#DAE2FD]">
-            <Calendar className="w-3.5 h-3.5 text-[#FFB77D]" />
+          <div className="flex items-center gap-1.5 font-mono text-foreground">
+            <Calendar className="w-3.5 h-3.5 text-warning" />
             <span>{summon.hearingDate}</span>
           </div>
         </div>
 
         {/* Quick Action Toolbar */}
-        <div className="pt-2 border-t border-[#222A3D] flex items-center justify-between gap-2">
+        <div className="pt-2 border-t border-border flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
             <button
               onClick={handleQuickForward}
               title="Forward summon details"
-              className="p-1.5 rounded-lg text-[#8F9097] hover:text-white hover:bg-[#1E293B] transition-colors"
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
               <Share2 className="w-3.5 h-3.5" />
             </button>
@@ -155,7 +155,7 @@ export const SummonCard: React.FC<SummonCardProps> = ({
             <button
               onClick={handleQuickSplit}
               title="Generate side-by-side visual screenshot"
-              className="p-1.5 rounded-lg text-[#8F9097] hover:text-[#ADC8F5] hover:bg-[#1E293B] transition-colors"
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-primary-text hover:bg-muted transition-colors"
             >
               <FileImage className="w-3.5 h-3.5" />
             </button>
@@ -171,7 +171,7 @@ export const SummonCard: React.FC<SummonCardProps> = ({
             )}
           </div>
 
-          <span className="text-xs text-[#ADC8F5] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform font-medium">
+          <span className="text-xs text-primary-text flex items-center gap-1 group-hover:translate-x-0.5 transition-transform font-medium">
             View Docket <ChevronRight className="w-3.5 h-3.5" />
           </span>
         </div>

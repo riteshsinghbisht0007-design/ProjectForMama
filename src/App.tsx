@@ -111,7 +111,7 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0B1326] text-[#DAE2FD] flex flex-col selection:bg-[#2F4A70] selection:text-white">
+    <div className="min-h-screen bg-background text-foreground flex flex-col selection:bg-primary-btn selection:text-white">
       {/* Top Police Navigation Bar */}
       <TopNavBar
         onOpenProfile={() => setIsProfileOpen(true)}
@@ -121,18 +121,18 @@ export function App() {
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
         {/* Welcome & Command Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#131B2E] border border-[#222A3D] rounded-2xl p-5 shadow-lg">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border rounded-2xl p-5 shadow-lg">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-[#FFB77D]">
+              <span className="text-xs font-mono text-warning">
                 [COMMAND TERMINAL • {currentUser.rank.toUpperCase()}]
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight">
               Welcome, {currentUser.displayName}
             </h1>
-            <p className="text-xs text-[#8F9097]">
-              Jurisdiction: <span className="text-[#DAE2FD] font-medium">{currentUser.policeStation}</span> •{' '}
+            <p className="text-xs text-muted-foreground">
+              Jurisdiction: <span className="text-foreground font-medium">{currentUser.policeStation}</span> •{' '}
               {currentUser.district}
             </p>
           </div>
@@ -154,7 +154,7 @@ export function App() {
                 setIsAddModalOpen(true);
               }}
               id="btn-add-summon-header"
-              className="px-5 py-2.5 rounded-xl bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs flex items-center gap-2 shadow-lg hover:shadow-blue-500/20 transition-all cursor-pointer"
+              className="px-5 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs flex items-center gap-2 shadow-lg hover:shadow-blue-500/20 transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Add Summon</span>
@@ -172,15 +172,15 @@ export function App() {
         />
 
         {/* Primary View Switcher Tabs */}
-        <div className="flex items-center justify-between border-b border-[#222A3D] pb-3 flex-wrap gap-3">
+        <div className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveTab('docket')}
               id="tab-docket-list"
               className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
                 activeTab === 'docket'
-                  ? 'bg-[#1E3A5F] text-white border border-[#ADC8F5]'
-                  : 'bg-[#131B2E] text-[#8F9097] hover:text-white border border-[#222A3D]'
+                  ? 'bg-primary-muted text-foreground border border-primary-text'
+                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
               }`}
             >
               <ListFilter className="w-4 h-4" />
@@ -192,8 +192,8 @@ export function App() {
               id="tab-hearing-calendar"
               className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
                 activeTab === 'calendar'
-                  ? 'bg-[#1E3A5F] text-white border border-[#ADC8F5]'
-                  : 'bg-[#131B2E] text-[#8F9097] hover:text-white border border-[#222A3D]'
+                  ? 'bg-primary-muted text-foreground border border-primary-text'
+                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
               }`}
             >
               <Calendar className="w-4 h-4" />
@@ -205,7 +205,7 @@ export function App() {
             <div className="flex items-center gap-2 text-xs">
               <button
                 onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                className="p-2 rounded-lg bg-[#131B2E] border border-[#222A3D] hover:bg-[#171F33] text-[#DAE2FD] flex items-center gap-1"
+                className="p-2 rounded-lg bg-card border border-border hover:bg-card-hover text-foreground flex items-center gap-1"
                 title={`Sort order: ${sortOrder.toUpperCase()}`}
               >
                 <ArrowUpDown className="w-3.5 h-3.5" />
@@ -215,7 +215,7 @@ export function App() {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-[#131B2E] border border-[#222A3D] text-[#DAE2FD] text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#ADC8F5]"
+                className="bg-card border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-text"
               >
                 <option value="hearingDate">Sort by Hearing Date</option>
                 <option value="createdAt">Sort by Registered Date</option>
@@ -230,19 +230,19 @@ export function App() {
             {/* Search and Status Filter Toolbar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-[#8F9097] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   id="search-summons-input"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search by Summon #, FIR, Person name, Address, Court or PS..."
-                  className="w-full bg-[#131B2E] border border-[#222A3D] rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-[#8F9097] focus:outline-none focus:border-[#ADC8F5]"
+                  className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary-text"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#8F9097] hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
                   >
                     Clear
                   </button>
@@ -257,8 +257,8 @@ export function App() {
                     onClick={() => setStatusFilter(status)}
                     className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
                       statusFilter === status
-                        ? 'bg-[#2F4A70] text-white font-bold'
-                        : 'bg-[#131B2E] border border-[#222A3D] text-[#8F9097] hover:text-white'
+                        ? 'bg-primary-btn text-white font-bold'
+                        : 'bg-card border border-border text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     {status}
@@ -269,17 +269,17 @@ export function App() {
 
             {/* Summons List */}
             {filteredSummons.length === 0 ? (
-              <div className="bg-[#131B2E] border border-[#222A3D] rounded-2xl p-10 sm:p-14 text-center space-y-4 shadow-inner">
-                <div className="w-14 h-14 mx-auto rounded-2xl bg-[#0B1326] border border-[#222A3D] flex items-center justify-center text-[#8F9097]">
+              <div className="bg-card border border-border rounded-2xl p-10 sm:p-14 text-center space-y-4 shadow-inner">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-background border border-border flex items-center justify-center text-muted-foreground">
                   <FileText className="w-7 h-7" />
                 </div>
                 <div className="max-w-md mx-auto space-y-1.5">
-                  <h3 className="text-base font-bold text-white">
+                  <h3 className="text-base font-bold text-foreground">
                     {searchQuery || statusFilter !== 'All'
                       ? 'No Summons Match Your Filters'
                       : 'No Judicial Summons Registered'}
                   </h3>
-                  <p className="text-xs text-[#8F9097] leading-relaxed">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
                     {searchQuery || statusFilter !== 'All'
                       ? 'Try adjusting your search terms or resetting the status filter.'
                       : 'Capture a court document with the camera, upload an image or PDF, and let AI OCR automatically extract the particulars.'}
@@ -291,9 +291,9 @@ export function App() {
                     setIsAddModalOpen(true);
                   }}
                   id="btn-add-first-summon"
-                  className="px-5 py-2.5 rounded-xl bg-[#2F4A70] hover:bg-[#3B82F6] text-white font-bold text-xs inline-flex items-center gap-2 shadow-lg transition-colors"
+                  className="px-5 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs inline-flex items-center gap-2 shadow-lg transition-colors"
                 >
-                  <Sparkles className="w-4 h-4 text-[#FFB77D]" />
+                  <Sparkles className="w-4 h-4 text-warning" />
                   <span>Scan or Add New Summon</span>
                 </button>
               </div>
