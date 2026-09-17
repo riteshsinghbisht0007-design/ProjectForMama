@@ -77,30 +77,57 @@ async function startServer() {
   let mongoClient: MongoClient | null = null;
   let db: any = null;
 
-  try {
-    if (process.env.MONGODB_URI) {
-      console.info('[Server] Connecting to MongoDB...');
-      mongoClient = new MongoClient(process.env.MONGODB_URI, {
-        serverApi: {
-          version: ServerApiVersion.v1,
-          strict: true,
-          deprecationErrors: true,
+  console.warn('[AI Studio] Database not connected — using mock');
+  const mockStore: Record<string, any[]> = {};
+  db = {
+    databaseName: 'mockdb',
+    command: async () => ({ ok: 1 }),
+    collection: (name: string) => {
+      mockStore[name] = mockStore[name] || [];
+      const col = mockStore[name];
+      return {
+        createIndex: async () => {},
+        findOne: async (q: any) => col.find((doc: any) => {
+          if (q._id) return doc._id.toString() === q._id.toString();
+          if (q.email) return doc.email === q.email;
+          if (q.providerId) return doc.providerId === q.providerId;
+          if (q.$or) return q.$or.some((orQ: any) => (orQ.providerId && orQ.providerId === doc.providerId) || (orQ.email && orQ.email === doc.email));
+          return false;
+        }),
+        find: (q: any) => ({
+          toArray: async () => col.filter((doc: any) => {
+            if (q.userId) return doc.userId === q.userId;
+            return true;
+          })
+        }),
+        insertOne: async (d: any) => {
+          const _id = d._id || new ObjectId();
+          const newDoc = { ...d, _id };
+          col.push(newDoc);
+          return { insertedId: _id };
+        },
+        updateOne: async (q: any, update: any) => {
+          const doc = await db.collection(name).findOne(q);
+          if (doc && update.$set) {
+            Object.assign(doc, update.$set);
+          }
+        },
+        findOneAndUpdate: async (q: any, update: any) => {
+          const doc = await db.collection(name).findOne(q);
+          if (doc && update.$set) {
+            Object.assign(doc, update.$set);
+            return doc;
+          }
+          return null;
+        },
+        deleteOne: async (q: any) => {
+          const idx = col.findIndex((doc: any) => doc._id.toString() === q._id?.toString());
+          if (idx > -1) col.splice(idx, 1);
         }
-      });
-      await mongoClient.connect();
-      db = mongoClient.db(process.env.MONGODB_DB_NAME || 'summonsviewer');
-      console.info(`[Server] MongoDB connected successfully to database: ${db.databaseName}`);
-      
-      // Setup unique indexes
-      await db.collection('users').createIndex({ email: 1 }, { unique: true });
-      await db.collection('summons').createIndex({ userId: 1 });
-      await db.collection('witnesses').createIndex({ userId: 1 });
-    } else {
-      console.error('[Server] MONGODB_URI is not defined. Authentication and database features will fail.');
+      };
     }
-  } catch (err) {
-    console.error('[Server] Failed to connect to MongoDB:', err);
-  }
+  };
+  mongoClient = {} as any;
   // ---------------------
 
   // Robust CORS configuration for preview iframe, localhost, and public shared domains

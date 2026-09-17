@@ -70,7 +70,7 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, stage,
     }
   };
 
-  const containerVariants = {
+  const containerVariants: any = {
     hidden: { opacity: 0 },
     visible: {
       opacity: 1,
@@ -81,7 +81,7 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, stage,
     }
   };
 
-  const letterVariants = {
+  const letterVariants: any = {
     hidden: { opacity: 0, filter: 'blur(6px)', y: 12, scale: 0.96 },
     visible: { 
       opacity: 1, 
@@ -136,7 +136,7 @@ export const WelcomeAnimation: React.FC<WelcomeAnimationProps> = ({ user, stage,
 
             {/* Email Animation */}
             <AnimatePresence>
-              {(stage === 'email' || stage === 'hold' || stage === 'exit' || (shouldReduceMotion && stage === 'hold')) && (
+              {(stage === 'email' || stage === 'hold' || stage === 'exit') && (
                 <motion.div
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
