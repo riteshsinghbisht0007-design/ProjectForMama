@@ -559,8 +559,8 @@ async function startServer() {
       status: 'ok',
       service: 'judicial-ocr',
       ocrAvailable: isConfigured,
-      primaryModel: 'gemini-3.8-flash',
-      fallbackModels: ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-image'],
+      primaryModel: 'gemini-3.6-flash',
+      fallbackModels: [],
       configured: isConfigured,
       timestamp: new Date().toISOString(),
     });
@@ -641,7 +641,7 @@ Analyze this court summon or warrant document image or PDF and extract all factu
 }
 IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegible in the document, set it to an empty string "". Never invent fictional names or addresses.`;
 
-      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-image'];
+      const candidateModels = ['gemini-3.6-flash'];
       let response: any = null;
       let lastModelError: any = null;
 

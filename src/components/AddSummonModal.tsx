@@ -113,6 +113,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const [cropMimeType, setCropMimeType] = useState<string>('image/jpeg');
   const [cropFileName, setCropFileName] = useState<string>('image.jpg');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Reset or initialize on open
   useEffect(() => {
@@ -237,9 +238,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   };
 
   // Trigger AI OCR extraction pipeline with visual phases
+  
   const triggerOcrPipeline = async (dataUrl: string, mime: string) => {
+    if (isExtracting) return; // Prevent concurrent OCR runs
     setCurrentStep('processing');
     setIsExtracting(true);
+
     setOcrSuccess(false);
     setOcrMessage(null);
     setExtractStatusText('Transmitting document to legal AI scanner...');
@@ -463,9 +467,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   };
 
   // Save summon to Firebase / database
+  
   const handleSaveSummon = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return; // Prevent double clicks
+    
     setFormError(null);
+
 
     // Validation
     if (!summonNumber.trim()) {
@@ -522,11 +530,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         rawFile
       );
 
+      setSaveSuccess(true);
       showToast(`Summon ${summonNumber.trim()} registered and saved successfully`, 'success', 'Docket Saved');
-
-      // Reset & close
-      stopCamera();
-      onClose();
+      setTimeout(() => {
+        stopCamera();
+        onClose();
+        setSaveSuccess(false);
+      }, 1000);
     } catch (err: any) {
       setFormError(err.message || 'Failed to save judicial summon to database');
       showToast(err.message || 'Failed to save summon', 'error', 'Save Error');
@@ -729,7 +739,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
               {/* QR Scanner Drawer */}
               {isQrActive && (
-                <div className="bg-card border border-border rounded-2xl p-5 space-y-4 shadow-premium animate-scaleIn">
+                <div className="backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-5 space-y-4 shadow-premium animate-scaleIn">
                   <div className="flex items-center justify-between pb-2 border-b border-border">
                     <span className="text-xs font-bold text-foreground flex items-center gap-2">
                       <QrCode className="w-4 h-4 text-warning" />
@@ -822,7 +832,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       onChange={(e) => setQrInput(e.target.value)}
                       placeholder="e.g. CNR:DLCT010012342026; FIR:142/2026; Court:Tis Hazari; Accused:Sanjay Kumar; Date:2026-09-24"
                       rows={2}
-                      className="w-full bg-background border border-border rounded-xl p-2.5 text-xs text-foreground font-mono placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text resize-none"
+                      className="w-full bg-background border border-border rounded-xl p-2.5 text-xs text-foreground font-mono placeholder-muted-foreground-alt focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all resize-none"
                     />
                     <button
                       type="button"
@@ -895,7 +905,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
           {/* STEP 2: PROCESSING & AI TELEMETRY */}
           {currentStep === 'processing' && (
-            <div className="py-12 px-4 text-center space-y-4 bg-card border border-border rounded-2xl">
+            <div className="py-12 px-4 text-center space-y-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl">
               <div className="relative w-16 h-16 mx-auto">
                 <div className="w-16 h-16 rounded-2xl bg-background-alt border border-border-strong flex items-center justify-center">
                   <Sparkles className="w-8 h-8 text-warning animate-pulse" />
@@ -964,7 +974,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               )}
 
               {/* SECTION A: WARRANT & CASE DETAILS */}
-              <div className="space-y-3 bg-card border border-border rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <Shield className="w-3.5 h-3.5 text-warning" />
                   A. Warrant & Case Identifiers
@@ -986,7 +996,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={summonNumber}
                       onChange={(e) => setSummonNumber(e.target.value)}
                       placeholder="e.g. SUM/2026/0892 or WAR-112"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
                         detectedFields.has('summonNumber') ? 'border-emerald-600/60' : 'border-border'
                       }`}
                       required
@@ -1008,7 +1018,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={caseNumber}
                       onChange={(e) => setCaseNumber(e.target.value)}
                       placeholder="e.g. FIR No. 248/2025 PS Tis Hazari"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
                         detectedFields.has('caseNumber') ? 'border-emerald-600/60' : 'border-border'
                       }`}
                       required
@@ -1022,7 +1032,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <select
                       value={urgency}
                       onChange={(e) => setUrgency(e.target.value as SummonUrgency)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     >
                       <option value="Standard">Standard</option>
                       <option value="High">High Priority</option>
@@ -1035,7 +1045,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <select
                       value={status}
                       onChange={(e) => setStatus(e.target.value as SummonStatus)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     >
                       <option value="Pending">Pending Service</option>
                       <option value="Upcoming">Upcoming Court</option>
@@ -1049,7 +1059,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       type="date"
                       value={issueDate}
                       onChange={(e) => setIssueDate(e.target.value)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     />
                   </div>
 
@@ -1065,7 +1075,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       id="input-hearing-date"
                       value={hearingDate}
                       onChange={(e) => setHearingDate(e.target.value)}
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
                         detectedFields.has('hearingDate') ? 'border-emerald-600/60' : 'border-border'
                       }`}
                       required
@@ -1075,7 +1085,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               </div>
 
               {/* SECTION B: RESPONDENT & SERVING ADDRESS */}
-              <div className="space-y-3 bg-card border border-border rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                     <MapPin className="w-3.5 h-3.5 text-warning" />
@@ -1120,7 +1130,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={personName}
                       onChange={(e) => setPersonName(e.target.value)}
                       placeholder="e.g. Ramesh Chandra / Rajesh Gupta"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
                         detectedFields.has('personName') ? 'border-emerald-600/60' : 'border-border'
                       }`}
                       required
@@ -1141,7 +1151,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={fatherName}
                       onChange={(e) => setFatherName(e.target.value)}
                       placeholder="e.g. Sh. Harish Chandra"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
                         detectedFields.has('fatherName') ? 'border-emerald-600/60' : 'border-border'
                       }`}
                     />
@@ -1163,7 +1173,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="House/Flat number, Street, Landmark, Village/Colony, Pincode for field officer delivery..."
                     rows={3}
-                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-primary-text ${
+                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
                       detectedFields.has('address') ? 'border-emerald-600/60' : 'border-border'
                     }`}
                     required
@@ -1172,7 +1182,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               </div>
 
               {/* SECTION C: COURT & CHARGES */}
-              <div className="space-y-3 bg-card border border-border rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <Building2 className="w-3.5 h-3.5 text-warning" />
                   C. Judicial Court & Offense Sections
@@ -1192,7 +1202,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtName}
                       onChange={(e) => setCourtName(e.target.value)}
                       placeholder="e.g. Chief Metropolitan Magistrate Court"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                       required
                     />
                   </div>
@@ -1206,7 +1216,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtAddress}
                       onChange={(e) => setCourtAddress(e.target.value)}
                       placeholder="e.g. Room No. 14, Tis Hazari Courts Complex, Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     />
                   </div>
                 </div>
@@ -1219,7 +1229,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={policeStation}
                       onChange={(e) => setPoliceStation(e.target.value)}
                       placeholder="e.g. PS Tis Hazari"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     />
                   </div>
 
@@ -1230,7 +1240,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={district}
                       onChange={(e) => setDistrict(e.target.value)}
                       placeholder="e.g. Central Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     />
                   </div>
 
@@ -1241,7 +1251,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={issuingAuthority}
                       onChange={(e) => setIssuingAuthority(e.target.value)}
                       placeholder="e.g. Judicial Magistrate 1st Class"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                     />
                   </div>
                 </div>
@@ -1255,7 +1265,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     value={offenseCharges}
                     onChange={(e) => setOffenseCharges(e.target.value)}
                     placeholder="e.g. Under Section 138 NI Act / 420 IPC"
-                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text"
+                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
                   />
                 </div>
               </div>
@@ -1286,17 +1296,22 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     type="submit"
                     disabled={isSubmitting}
                     id="btn-save-summon-submit"
-                    className="px-6 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center gap-2 shadow-lg hover:shadow-blue-500/25 transition-all disabled:opacity-50 cursor-pointer"
+                    className="px-6 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] transition-all disabled:opacity-50 cursor-pointer"
                   >
-                    {isSubmitting ? (
+                    {saveSuccess ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Saved ✓</span>
+                      </>
+                    ) : isSubmitting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Saving to Cloud Database...</span>
+                        <span>Saving...</span>
                       </>
                     ) : (
                       <>
                         <Check className="w-4 h-4" />
-                        <span>Save Judicial Summon</span>
+                        <span>Save Summons</span>
                       </>
                     )}
                   </button>
@@ -1323,6 +1338,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         title="Register & Select Person"
         defaultRoleFilter="Accused"
       />
+      {cropImageSrc && (
+        <ImageCropperModal
+          isOpen={!!cropImageSrc}
+          onClose={() => setCropImageSrc(null)}
+          imageSrc={cropImageSrc}
+          onCropComplete={handleCropComplete}
+        />
+      )}
     </div>
   );
 };

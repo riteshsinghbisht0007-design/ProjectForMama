@@ -32,16 +32,12 @@ const SummonContext = createContext<SummonContextType | undefined>(undefined);
 export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
 
-    const [summons, setSummons] = useState<Summon[]>([]);
+  const [summons, setSummons] = useState<Summon[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Witnesses state
   const [witnesses, setWitnesses] = useState<WitnessPerson[]>([]);
   const [isLoadingWitnesses, setIsLoadingWitnesses] = useState<boolean>(true);
-
-  // Scoped localStorage key per officer user
-  const getStorageKey = (uid: string) => `users_${uid}_summons`;
-  const getWitnessStorageKey = (uid: string) => `users_${uid}_witnesses`;
 
   // Fetch summons from MongoDB API
   const fetchSummons = useCallback(async (uid: string) => {
@@ -78,7 +74,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
-  // 1. Initial loading of summons from MongoDB
   useEffect(() => {
     if (!currentUser) {
       setSummons([]);
@@ -88,7 +83,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchSummons(currentUser.uid);
   }, [currentUser, fetchSummons]);
 
-  // 1b. Initial loading of witnesses from MongoDB
   useEffect(() => {
     if (!currentUser) {
       setWitnesses([]);
@@ -98,38 +92,41 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchWitnesses(currentUser.uid);
   }, [currentUser, fetchWitnesses]);
 
-  // 2. Secure cloud document upload
   const uploadAttachment = async (
     summonId: string,
     fileOrDataUrl: string | File,
     fileName: string
   ): Promise<string> => {
     if (typeof fileOrDataUrl === 'string' && fileOrDataUrl.startsWith('http')) {
-      return fileOrDataUrl; // Already a URL
+      return fileOrDataUrl;
     }
 
     try {
-      let fileToUpload: Blob;
+      const { storage, storageRef, uploadBytes, getDownloadURL, isFirebaseConfigured } = await import('../services/firebase');
+      
+      let fileToUpload: File | Blob;
       if (typeof fileOrDataUrl === 'string') {
-        // It's a base64 data URL, convert to Blob
-        const fetchResponse = await fetch(fileOrDataUrl);
-        fileToUpload = await fetchResponse.blob();
+        const res = await fetch(fileOrDataUrl);
+        fileToUpload = await res.blob();
       } else {
         fileToUpload = fileOrDataUrl;
       }
 
-      // Import firebase storage here or dynamically
-      const { storage, storageRef, uploadBytes, getDownloadURL } = await import('../services/firebase');
+      if (!isFirebaseConfigured) {
+        throw new Error('Firebase Storage not configured, falling back to local base64.');
+      }
+
+      const fileRef = storageRef(storage, `summons/${currentUser?.uid}/${summonId}_${fileName}`);
       
-      const fileExt = fileName.split('.').pop() || 'png';
-      const storagePath = `summons/${summonId}/${Date.now()}.${fileExt}`;
-      const fileRef = storageRef(storage, storagePath);
+      // Add timeout to prevent hanging
+      const uploadPromise = uploadBytes(fileRef, fileToUpload);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Upload timeout')), 10000));
       
-      await uploadBytes(fileRef, fileToUpload);
+      await Promise.race([uploadPromise, timeoutPromise]);
       const downloadURL = await getDownloadURL(fileRef);
       return downloadURL;
     } catch (err) {
-      console.error('Failed to upload attachment:', err);
+      console.warn('Failed to upload attachment, falling back to data URL:', err);
       // Fallback to dataURL if upload fails
       if (typeof fileOrDataUrl === 'string') return fileOrDataUrl;
       return new Promise((resolve) => {
@@ -140,12 +137,12 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 3. Quick Instant Add Summon
   const addSummon = async (
     summonData: Omit<Summon, 'id' | 'userId' | 'createdAt' | 'updatedAt'>,
     attachmentFile?: File | Blob | null
   ): Promise<Summon> => {
     if (!currentUser) throw new Error('User must be authenticated to add summons');
+    
     const now = new Date().toISOString();
     const summonId = 'sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
@@ -202,7 +199,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 4. Quick Instant Update Summon
   const updateSummon = async (id: string, updates: Partial<Summon>) => {
     if (!currentUser) return;
     const now = new Date().toISOString();
@@ -232,10 +228,8 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 5. Quick Instant Delete Summon
   const deleteSummon = async (id: string) => {
     if (!currentUser) return;
-
     try {
       const response = await fetch(`/api/summons/${id}`, {
         method: 'DELETE',
@@ -256,7 +250,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 6. Mark as Served & Closed
   const markAsServed = async (id: string, notes?: string) => {
     const today = new Date().toISOString().split('T')[0];
     await updateSummon(id, {
@@ -266,15 +259,12 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
-  // 7. Toggle Reminder
   const toggleReminder = async (id: string) => {
     const target = summons.find((s) => s.id === id);
     if (!target) return;
-
     if (!target.reminderEnabled) {
       await requestNotificationPermission();
     }
-
     await updateSummon(id, {
       reminderEnabled: !target.reminderEnabled,
     });
@@ -282,7 +272,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const getSummonById = (id: string) => summons.find((s) => s.id === id);
 
-  // 8. Witness Management CRUD (Instant Local Save)
   const addWitness = async (
     witnessData: Omit<WitnessPerson, 'id' | 'userId' | 'createdAt' | 'updatedAt'>
   ): Promise<WitnessPerson> => {
@@ -357,7 +346,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const deleteWitness = async (id: string) => {
     if (!currentUser) return;
-
     try {
       const response = await fetch(`/api/witnesses/${id}`, {
         method: 'DELETE',
@@ -380,7 +368,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const getWitnessById = (id: string) => witnesses.find((w) => w.id === id);
 
-  // Dynamic statistics calculated directly from actual user records
   const metrics: MetricSummary = {
     total: summons.length,
     pending: summons.filter((s) => s.status === 'Pending').length,

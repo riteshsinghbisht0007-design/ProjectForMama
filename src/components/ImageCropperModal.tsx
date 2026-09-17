@@ -55,18 +55,30 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
 
       const pixelRatio = window.devicePixelRatio;
 
-      canvas.width = Math.floor(completedCrop.width * scaleX * pixelRatio);
-      canvas.height = Math.floor(completedCrop.height * scaleY * pixelRatio);
+      
+      // Add max dimension scaling for performance
+      const MAX_DIMENSION = 1600;
+      let finalWidth = completedCrop.width * scaleX;
+      let finalHeight = completedCrop.height * scaleY;
+      
+      if (finalWidth > MAX_DIMENSION || finalHeight > MAX_DIMENSION) {
+        if (finalWidth > finalHeight) {
+          finalHeight = Math.round(finalHeight * (MAX_DIMENSION / finalWidth));
+          finalWidth = MAX_DIMENSION;
+        } else {
+          finalWidth = Math.round(finalWidth * (MAX_DIMENSION / finalHeight));
+          finalHeight = MAX_DIMENSION;
+        }
+      }
 
+      canvas.width = finalWidth;
+      canvas.height = finalHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-
-      ctx.scale(pixelRatio, pixelRatio);
       ctx.imageSmoothingQuality = 'high';
 
       const cropX = completedCrop.x * scaleX;
       const cropY = completedCrop.y * scaleY;
-
       const cropWidth = completedCrop.width * scaleX;
       const cropHeight = completedCrop.height * scaleY;
 
@@ -78,8 +90,8 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
         cropHeight,
         0,
         0,
-        completedCrop.width * scaleX,
-        completedCrop.height * scaleY
+        finalWidth,
+        finalHeight
       );
 
       canvas.toBlob(
@@ -89,8 +101,9 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
           }
         },
         'image/jpeg',
-        0.95
+        0.75 // Optimized quality for fast OCR
       );
+
     } else {
       // If no crop selection, just return original image blob
       fetch(imageSrc).then(r => r.blob()).then(blob => onCropComplete(blob));

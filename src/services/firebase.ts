@@ -13,22 +13,6 @@ import {
   User as FirebaseUser,
 } from 'firebase/auth';
 import {
-  getFirestore,
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  where,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
   getStorage,
   ref as storageRef,
   uploadString,
@@ -57,14 +41,11 @@ export const isFirebaseConfigured = Boolean(
 
 // Initialize or reuse Firebase App instance
 const app = getApps().length > 0 ? getApp() : initializeApp(defaultFirebaseConfig);
-
 export const auth = getAuth(app);
-export const db = getFirestore(app);
 export const storage = getStorage(app);
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
-
 export const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
@@ -78,22 +59,7 @@ export {
   signOut,
   onAuthStateChanged,
   type FirebaseUser,
-
-  // Firestore primitives
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  where,
-  serverTimestamp,
-
+  
   // Storage primitives
   storageRef,
   uploadString,

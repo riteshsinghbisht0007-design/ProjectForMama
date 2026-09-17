@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { OfficerUser } from '../types';
 import { auth, googleProvider, facebookProvider, signInWithPopup, signOut as firebaseSignOut } from '../services/firebase';
@@ -81,8 +80,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await response.json();
       setCurrentUser(data.user);
     } catch (err: any) {
-      setAuthError(err.message || `${providerName} login failed`);
-      throw err;
+      console.error(`Firebase ${providerName} login error:`, err);
+      let errorMessage = err.message || `${providerName} login failed`;
+      
+      if (err.code === 'auth/unauthorized-domain') {
+        const currentDomain = window.location.hostname;
+        errorMessage = `Domain not authorized. Please add "${currentDomain}" to Firebase Console -> Authentication -> Settings -> Authorized Domains.`;
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Login popup was closed before finishing.';
+      } else if (err.code === 'auth/popup-blocked') {
+        errorMessage = 'Login popup was blocked by your browser. Please allow popups for this site.';
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        errorMessage = 'Login popup request was cancelled.';
+      }
+      
+      setAuthError(errorMessage);
+      throw new Error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -172,6 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
       await firebaseSignOut(auth).catch(() => {});
+      sessionStorage.removeItem('summonsmitra_welcomed');
     } catch (err) {
       console.error("Logout error", err);
     }

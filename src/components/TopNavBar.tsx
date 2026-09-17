@@ -112,7 +112,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           <button
             onClick={toggleTheme}
             title="Toggle theme"
-            className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover btn-premium cursor-pointer"
+            className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:shadow-[0_0_10px_rgba(6,182,212,0.4)] btn-premium cursor-pointer"
           >
             {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
@@ -123,7 +123,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
               onClick={onOpenWitnessDirectory}
               id="witness-directory-btn"
               title="Witness & People Directory"
-              className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover btn-premium cursor-pointer"
+              className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:shadow-[0_0_10px_rgba(6,182,212,0.4)] btn-premium cursor-pointer"
             >
               <Users className="w-4 h-4" />
             </button>

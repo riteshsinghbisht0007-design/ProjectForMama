@@ -73,6 +73,40 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
     return false;
   };
 
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Autosave Effect
+  React.useEffect(() => {
+    if (!isEditing) return;
+    if (!hasUnsavedChanges()) return;
+
+    setSaveStatus('saving');
+
+    const timer = setTimeout(async () => {
+      try {
+        await updateSummon(summon.id, {
+          personName: editPersonName.trim(),
+          fatherName: editFatherName.trim() || undefined,
+          address: editAddress.trim(),
+          hearingDate: editHearingDate,
+          courtName: editCourtName.trim(),
+          courtAddress: editCourtAddress.trim(),
+          offenseCharges: editOffense.trim(),
+          urgency: editUrgency,
+        });
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000); // clear saved text after 2s
+      } catch {
+        setSaveStatus('error');
+      }
+    }, 1000); // 1s debounce
+
+    return () => clearTimeout(timer);
+  }, [
+    editPersonName, editFatherName, editAddress, editHearingDate,
+    editCourtName, editCourtAddress, editOffense, editUrgency, isEditing, summon.id, updateSummon
+  ]);
+
   const handleClose = () => {
     if (hasUnsavedChanges()) {
       if (window.confirm("You have unsaved changes. Discard them?")) {
@@ -322,7 +356,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           )}
 
           {summon.pdfUrl && (
-            <div className="p-4 bg-card border border-border rounded-xl flex items-center justify-between">
+            <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-muted rounded-lg text-primary-text">
                   <FileText className="w-5 h-5" />
@@ -360,9 +394,16 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                 <div className="flex items-center">
                   <button
                   onClick={handleSaveEdit}
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer"
+                  disabled={saveStatus === 'saving'}
+                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer disabled:opacity-50"
                 >
-                  <Save className="w-3.5 h-3.5" /> Save Changes
+                  {saveStatus === 'saving' ? (
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
+                  ) : saveStatus === 'saved' ? (
+                    <><Check className="w-3.5 h-3.5" /> Saved</>
+                  ) : (
+                    <><Save className="w-3.5 h-3.5" /> Save / Done</>
+                  )}
                 </button>
                 <button
                   onClick={() => {
@@ -381,7 +422,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
             </div>
 
             {/* Respondent & Address Box */}
-            <div className="p-4 bg-card border border-border rounded-xl space-y-3">
+            <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl space-y-3">
               <div className="flex items-start gap-3">
                 <div className="p-2 rounded-lg bg-muted text-info-text shrink-0 mt-1">
                   <User className="w-4 h-4" />
@@ -448,7 +489,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
             {/* Court & Appearance Box */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="p-4 bg-card border border-border rounded-xl">
+              <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                   <Building2 className="w-3.5 h-3.5 text-info-text" />
                   <span>COURT & BENCH</span>
@@ -481,7 +522,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                 )}
               </div>
 
-              <div className="p-4 bg-card border border-border rounded-xl">
+              <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                   <Calendar className="w-3.5 h-3.5 text-warning" />
                   <span>HEARING TIMELINE</span>

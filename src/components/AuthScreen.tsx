@@ -207,7 +207,8 @@ export const AuthScreen: React.FC = () => {
         </div>
 
         {/* Auth Card */}
-        <div className="bg-card border border-border rounded-2xl p-6 sm:p-8 shadow-2xl space-y-5">
+        <div className="backdrop-blur-xl bg-card/80 border border-white/10 dark:border-white/5 rounded-2xl p-6 sm:p-8 shadow-[0_8px_32px_rgba(0,0,0,0.12)] space-y-5 relative group transition-all duration-500 hover:border-cyan-500/30">
+          <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" />
           {displayError && (
             <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-900 dark:text-red-200 flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
@@ -286,7 +287,7 @@ export const AuthScreen: React.FC = () => {
                   onClick={handleGoogleAuth}
                   disabled={loading}
                   id="btn-google-login"
-                  className="w-full py-2.5 px-4 rounded-xl border border-border-strong bg-card-hover hover:bg-muted text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+                  className="relative z-10 w-full py-2.5 px-4 rounded-xl border border-border-strong bg-card-hover hover:bg-muted hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] hover:border-cyan-500/50 text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-all duration-300 disabled:opacity-50 cursor-pointer"
                 >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin text-primary-text" />
@@ -466,11 +467,11 @@ export const AuthScreen: React.FC = () => {
                 </div>
 
                 <button
-                  type="submit"
-                  disabled={loading}
-                  id="auth-submit-btn"
-                  className="w-full py-2.5 px-4 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-lg disabled:opacity-50 cursor-pointer mt-2"
-                >
+                type="submit"
+                disabled={loading}
+                id="auth-submit-btn"
+                className="relative z-10 w-full py-2.5 px-4 rounded-xl bg-primary-btn text-white hover:bg-primary-hover hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] text-xs font-bold flex items-center justify-center gap-2 transition-all duration-300 shadow-lg disabled:opacity-50 cursor-pointer mt-2"
+              >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (

@@ -161,8 +161,8 @@ export const parseSummonTextStrict = (rawText: string): ExtractedSummonData => {
 export const optimizeImageForOcr = async (
   dataUrl: string,
   mimeType: string,
-  maxDimension = 2048,
-  quality = 0.85
+  maxDimension = 1500,
+  quality = 0.75
 ): Promise<{ dataUrl: string; mimeType: string }> => {
   if (mimeType.includes('pdf') || !dataUrl.startsWith('data:image')) {
     return { dataUrl, mimeType };

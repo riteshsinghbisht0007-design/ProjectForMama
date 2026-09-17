@@ -272,7 +272,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+                className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
               >
                 <Save className="w-3.5 h-3.5" /> Save Profile
               </button>
@@ -285,7 +285,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
               onClick={handleLogout}
               disabled={isLoggingOut}
               id="logout-btn"
-              className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800/80 text-red-200 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800/80 text-red-200 hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {isLoggingOut ? (
                 <div className="w-4 h-4 border-2 border-red-200 border-t-transparent rounded-full animate-spin" />
