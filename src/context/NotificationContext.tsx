@@ -24,7 +24,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   useEffect(() => {
-    if (unreadCount > 0 && Notification.permission === 'granted') {
+    if (unreadCount > 0 && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
       const latestUnread = notifications.find(n => !n.isRead);
       if (latestUnread) {
         // Prevent spamming the same notification repeatedly using sessionStorage
