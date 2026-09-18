@@ -151,14 +151,14 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
           )}
 
           {/* Forward Text Preview */}
-          <div className="p-3.5 bg-card border border-border rounded-xl text-xs text-foreground font-mono">
+          <div className="p-3.5 bg-card border border-border rounded-xl text-xs text-foreground font-mono shadow-sm">
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-primary-text">Formatted Dispatch Text (For Field Officers / WhatsApp):</span>
               <button
                 onClick={handleCopyText}
-                className="text-xs text-warning hover:underline flex items-center gap-1"
+                className="text-xs text-primary-text hover:underline flex items-center gap-1 cursor-pointer"
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 {copied ? 'Copied to Clipboard!' : 'Copy Text'}
               </button>
             </div>
@@ -177,9 +177,9 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleCopyText}
-              className="px-3.5 py-2 rounded-xl border border-border hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl border border-border hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
             >
-              {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              {copied ? <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied' : 'Copy Text'}
             </button>
 
@@ -187,16 +187,16 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf}
               id="download-pdf-modal-btn"
-              className="px-3.5 py-2 rounded-xl bg-border hover:bg-primary-btn text-white hover:text-foreground text-xs font-bold flex items-center gap-1.5 border border-border-strong transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-card hover:bg-muted text-foreground text-xs font-bold flex items-center gap-1.5 border border-border transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
             >
-              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-warning" /> : <FileText className="w-4 h-4 text-warning" />}
+              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-[#2563EB]" /> : <FileText className="w-4 h-4 text-[#2563EB]" />}
               <span>Download PDF</span>
             </button>
 
             <button
               onClick={handleDownload}
               disabled={!splitImageUrl || isGenerating}
-              className="px-3.5 py-2 rounded-xl bg-primary-muted hover:bg-primary-btn text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] hover:bg-[#DBEAFE] dark:bg-primary-muted dark:text-white dark:border-border text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
             >
               <Download className="w-4 h-4" /> Download Image
             </button>
@@ -204,7 +204,7 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
             <button
               onClick={handleShare}
               disabled={!splitImageUrl || isGenerating || sharing}
-              className="px-4 py-2 rounded-xl bg-primary-hover hover:bg-blue-600 text-foreground text-xs font-bold flex items-center gap-1.5 shadow-lg transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-primary-btn hover:bg-primary-hover text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Share2 className="w-4 h-4" /> Forward & Share
             </button>

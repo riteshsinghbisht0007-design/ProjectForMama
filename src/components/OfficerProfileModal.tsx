@@ -123,7 +123,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary-muted text-primary-text">
+            <div className="p-2 rounded-lg bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] dark:bg-primary-muted dark:text-primary-text dark:border-border">
               <Shield className="w-5 h-5" />
             </div>
             <div>
@@ -144,7 +144,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
         {/* Content */}
         <div className="p-6 space-y-6">
           {/* Officer Identity Card */}
-          <div className="flex items-center gap-4 p-4 bg-card border border-border rounded-xl relative">
+          <div className="flex items-center gap-4 p-4 bg-card border border-border rounded-xl relative shadow-sm">
             <div className="relative">
               {photoURL ? (
                 <img
@@ -175,7 +175,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-foreground truncate">{currentUser.displayName}</h3>
-                <span className="px-2 py-0.5 text-[10px] font-mono bg-primary-muted text-primary-text rounded uppercase">
+                <span className="px-2 py-0.5 text-[10px] font-mono bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-primary-muted dark:text-primary-text rounded uppercase">
                   {currentUser.authProvider}
                 </span>
               </div>
@@ -200,7 +200,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </div>
             <div className="flex items-center justify-between text-muted-foreground">
               <span>Encryption Protocol:</span>
-              <span className="text-emerald-400 flex items-center gap-1">
+              <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
                 <CheckCircle2 className="w-3.5 h-3.5" /> End-to-End Vault
               </span>
             </div>
@@ -213,7 +213,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </span>
 
             {saveSuccess && (
-              <div className="p-2 bg-emerald-950/40 border border-emerald-700/60 rounded text-xs text-emerald-300 flex items-center gap-1.5">
+              <div className="p-2 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-700/60 dark:text-emerald-300 rounded text-xs flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4" /> Profile credentials updated successfully!
               </div>
             )}
@@ -225,7 +225,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-[#2563EB] focus:outline-none"
                 />
               </div>
 
@@ -235,7 +235,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                   type="text"
                   value={badgeNumber}
                   onChange={(e) => setBadgeNumber(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground font-mono"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground font-mono focus:border-[#2563EB] focus:outline-none"
                 />
               </div>
             </div>
@@ -247,7 +247,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                   type="text"
                   value={rank}
                   onChange={(e) => setRank(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-[#2563EB] focus:outline-none"
                 />
               </div>
 
@@ -257,7 +257,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                   type="text"
                   value={policeStation}
                   onChange={(e) => setPoliceStation(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
+                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-[#2563EB] focus:outline-none"
                 />
               </div>
             </div>
@@ -268,14 +268,14 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                 type="text"
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
-                className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
+                className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-[#2563EB] focus:outline-none"
               />
             </div>
 
             <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+                className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5" /> Save Profile
               </button>
@@ -288,10 +288,10 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
               onClick={handleLogout}
               disabled={isLoggingOut}
               id="logout-btn"
-              className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800/80 text-red-200 hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              className="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 dark:bg-red-950/60 dark:hover:bg-red-900 dark:border-red-800/80 dark:text-red-200 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm cursor-pointer"
             >
               {isLoggingOut ? (
-                <div className="w-4 h-4 border-2 border-red-200 border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
               ) : (
                 <LogOut className="w-4 h-4" />
               )}

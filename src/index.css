@@ -30,35 +30,35 @@
 
 @layer base {
   :root {
-    /* PREMIUM LIGHT MODE */
-    --background: #F4F7FA;
-    --background-alt: #EBF0F5;
+    /* CLASSIC BLUE LIGHT MODE */
+    --background: #F8FAFC;
+    --background-alt: #F1F5F9;
     --card: #FFFFFF;
-    --card-hover: #FDFDFD;
-    --muted: #F1F5F9;
-    --primary-muted: #EBF2FF;
-    --primary-btn: #1D4ED8;
-    --primary-hover: #1E40AF;
+    --card-hover: #F8FAFC;
+    --muted: #EFF6FF;
+    --primary-muted: #EFF6FF;
+    --primary-btn: #2563EB;
+    --primary-hover: #1E3A8A;
     
-    --border: #E2E8F0;
-    --border-strong: #CBD5E1;
+    --border: #DBEAFE;
+    --border-strong: #BFDBFE;
     
     --foreground: #0F172A;
-    --foreground-alt: #334155;
+    --foreground-alt: #1E293B;
     --muted-foreground: #64748B;
     --muted-foreground-alt: #94A3B8;
-    --primary-text: #1E40AF;
-    --primary-text-bright: #2563EB;
+    --primary-text: #2563EB;
+    --primary-text-bright: #1E3A8A;
     
     --warning: #D97706;
     --warning-muted: #FEF3C7;
     --success: #059669;
     --success-muted: #D1FAE5;
-    --info-text: #475569;
-    --info-muted: #E0F2FE;
+    --info-text: #1E3A8A;
+    --info-muted: #EFF6FF;
     
-    --shadow-premium: 0 4px 12px rgba(0, 0, 0, 0.03), 0 1px 3px rgba(0, 0, 0, 0.05);
-    --shadow-premium-hover: 0 10px 24px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.04);
+    --shadow-premium: 0 1px 3px 0 rgba(37, 99, 235, 0.05), 0 1px 2px -1px rgba(37, 99, 235, 0.05);
+    --shadow-premium-hover: 0 4px 6px -1px rgba(37, 99, 235, 0.1), 0 2px 4px -2px rgba(37, 99, 235, 0.1);
   }
   
   .dark {
@@ -107,13 +107,13 @@
 /* Base interactive transitions */
 @layer components {
   .btn-premium {
-    @apply relative overflow-hidden transition-all duration-300 active:scale-95 hover:-translate-y-0.5 hover:shadow-premium-hover disabled:opacity-50 disabled:pointer-events-none;
+    @apply relative overflow-hidden transition-all duration-200 active:scale-[0.98] hover:-translate-y-0.5 hover:shadow-premium-hover disabled:opacity-50 disabled:pointer-events-none cursor-pointer;
   }
   .card-premium {
-    @apply transition-all duration-300 hover:shadow-premium-hover hover:-translate-y-0.5 border border-border;
+    @apply transition-all duration-200 hover:shadow-premium-hover hover:-translate-y-0.5 border border-border;
   }
   .input-premium {
-    @apply transition-all duration-300 focus:ring-2 focus:ring-primary-btn/30 focus:border-primary-btn hover:border-border-strong outline-none;
+    @apply transition-all duration-200 focus:ring-2 focus:ring-primary-btn/25 focus:border-primary-btn hover:border-border-strong outline-none;
   }
 }
 

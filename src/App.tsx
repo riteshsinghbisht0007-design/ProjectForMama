@@ -27,10 +27,12 @@ import { SplitScreenshotModal } from './components/SplitScreenshotModal';
 import { HearingCalendarView } from './components/HearingCalendarView';
 import { OfficerProfileModal } from './components/OfficerProfileModal';
 import { NotificationPanelModal } from './components/NotificationPanelModal';
-import { PriorityAlertsDashboardWidget } from './components/PriorityAlertsDashboardWidget';
+import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { AuthScreen } from './components/AuthScreen';
 import { WelcomeAnimation } from './components/WelcomeAnimation';
 import { WitnessDirectoryModal } from './components/WitnessDirectoryModal';
+import { registerPushServiceWorker } from './services/fcmService';
+import { auth } from './services/firebase';
 
 export function App() {
   const { currentUser, isLoading: authLoading } = useAuth();
@@ -58,6 +60,122 @@ export function App() {
   const [postLoginStage, setPostLoginStage] = useState<'idle' | 'hello' | 'email' | 'hold' | 'exit' | 'dashboard'>(() => {
     return sessionStorage.getItem('summonsmitra_welcomed') ? 'dashboard' : 'idle';
   });
+
+  // 1. Check and persist deep-link summon ID early if user accesses URL directly
+  React.useEffect(() => {
+    const pathMatch = window.location.pathname.match(/^\/summons\/([^/?#]+)/);
+    const queryParamId = new URLSearchParams(window.location.search).get('summonId');
+    const targetId = pathMatch ? pathMatch[1] : queryParamId;
+    if (targetId) {
+      sessionStorage.setItem('summonsmitra_pending_summon_id', targetId);
+    }
+  }, []);
+
+  // 2. Register FCM & Web Push Service Worker on startup
+  React.useEffect(() => {
+    registerPushServiceWorker().catch(() => {});
+  }, []);
+
+  // 3. Resolve deep-linked summon after authentication
+  React.useEffect(() => {
+    if (!currentUser || summonsLoading) return;
+
+    const pendingId = sessionStorage.getItem('summonsmitra_pending_summon_id');
+    const pathMatch = window.location.pathname.match(/^\/summons\/([^/?#]+)/);
+    const queryParamId = new URLSearchParams(window.location.search).get('summonId');
+    const targetId = pendingId || (pathMatch ? pathMatch[1] : queryParamId);
+
+    if (targetId && !selectedSummon) {
+      const match = summons.find((s) => s.id === targetId || (s as any)._id === targetId);
+      if (match) {
+        setSelectedSummon(match);
+        sessionStorage.removeItem('summonsmitra_pending_summon_id');
+        setPostLoginStage('dashboard');
+      } else {
+        (async () => {
+          try {
+            const headers: Record<string, string> = {};
+            if (auth.currentUser) {
+              try {
+                const token = await auth.currentUser.getIdToken();
+                headers['Authorization'] = `Bearer ${token}`;
+              } catch (_) {}
+            }
+            const res = await fetch(`/api/summons/${targetId}`, {
+              credentials: 'include',
+              headers,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              setSelectedSummon(data);
+              sessionStorage.removeItem('summonsmitra_pending_summon_id');
+              setPostLoginStage('dashboard');
+            }
+          } catch (err) {
+            console.warn('[DeepLink] Error fetching summon by ID:', err);
+          }
+        })();
+      }
+    }
+  }, [currentUser, summonsLoading, summons, selectedSummon]);
+
+  // 4. Synchronize URL state when summon modal is opened or closed
+  React.useEffect(() => {
+    if (selectedSummon) {
+      const targetPath = `/summons/${selectedSummon.id}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.replaceState(null, '', targetPath);
+      }
+    } else {
+      if (window.location.pathname.startsWith('/summons/')) {
+        window.history.replaceState(null, '', '/');
+      }
+    }
+  }, [selectedSummon]);
+
+  // 5. Listen for service worker notification click events when browser window is already open
+  React.useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+
+    const handleSwMessage = async (event: MessageEvent) => {
+      if (event.data && event.data.type === 'FCM_NOTIFICATION_CLICK') {
+        const sid = event.data.summonId;
+        if (sid) {
+          const match = summons.find((s) => s.id === sid || (s as any)._id === sid);
+          if (match) {
+            setSelectedSummon(match);
+            setIsAlertsOpen(false);
+          } else if (currentUser) {
+            try {
+              const headers: Record<string, string> = {};
+              if (auth.currentUser) {
+                try {
+                  const token = await auth.currentUser.getIdToken();
+                  headers['Authorization'] = `Bearer ${token}`;
+                } catch (_) {}
+              }
+              const res = await fetch(`/api/summons/${sid}`, {
+                credentials: 'include',
+                headers,
+              });
+              if (res.ok) {
+                const data = await res.json();
+                setSelectedSummon(data);
+                setIsAlertsOpen(false);
+              }
+            } catch (err) {
+              console.warn('[SW Notification Click] Failed to retrieve summon:', err);
+            }
+          }
+        }
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+    };
+  }, [summons, currentUser]);
 
   React.useEffect(() => {
     if (currentUser && postLoginStage === 'idle') {
@@ -179,6 +297,9 @@ export function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+        {/* Soft Notification Permission Banner */}
+        <NotificationPermissionBanner />
+
         {/* Welcome & Command Header */}
         <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border rounded-2xl p-5 shadow-lg">
           <div className="space-y-1">
@@ -200,7 +321,7 @@ export function App() {
             {unreadCount > 0 && (
               <button
                 onClick={() => setIsAlertsOpen(true)}
-                className="px-3.5 py-2.5 rounded-xl bg-red-950/70 border border-red-800 text-red-300 hover:bg-red-900/80 text-xs font-bold flex items-center gap-2 transition-colors animate-pulse"
+                className="px-3.5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 dark:bg-red-950/70 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/80 text-xs font-bold flex items-center gap-2 transition-colors animate-pulse"
               >
                 <AlertTriangle className="w-4 h-4" />
                 <span>{unreadCount} Court Hearing Alert(s)</span>
@@ -213,7 +334,7 @@ export function App() {
                 setIsAddModalOpen(true);
               }}
               id="btn-add-summon-header"
-              className="px-5 py-2.5 rounded-xl bg-primary-btn text-white font-bold text-xs flex items-center gap-2 btn-premium cursor-pointer"
+              className="px-5 py-2.5 rounded-xl bg-primary-btn hover:bg-primary-hover text-white font-bold text-xs flex items-center gap-2 btn-premium shadow-sm cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Add Summon</span>
@@ -222,20 +343,15 @@ export function App() {
         </motion.div>
 
         {/* Dynamic Metric Statistics Grid */}
-        <motion.div variants={itemVariants}><MetricCardsGrid
-          activeFilter={statusFilter}
-          onSelectFilter={(f) => {
-            setStatusFilter(f);
-            if (activeTab === 'calendar') setActiveTab('docket');
-          }}
-        />
-          
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 mt-6">
-            <PriorityAlertsDashboardWidget onSelectSummon={(sid) => {
-              const s = summons.find(x => x.id === sid);
-              if (s) setSelectedSummon(s);
-            }} />
-          </div></motion.div>
+        <motion.div variants={itemVariants}>
+          <MetricCardsGrid
+            activeFilter={statusFilter}
+            onSelectFilter={(f) => {
+              setStatusFilter(f);
+              if (activeTab === 'calendar') setActiveTab('docket');
+            }}
+          />
+        </motion.div>
 
         {/* Primary View Switcher Tabs */}
         <motion.div variants={itemVariants} className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
@@ -243,10 +359,10 @@ export function App() {
             <button
               onClick={() => setActiveTab('docket')}
               id="tab-docket-list"
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 btn-premium ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 btn-premium transition-all ${
                 activeTab === 'docket'
-                  ? 'bg-primary-muted text-foreground border border-primary-text'
-                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
+                  ? 'bg-primary-btn text-white shadow-sm ring-2 ring-primary-btn/20'
+                  : 'bg-card text-muted-foreground hover:text-foreground hover:bg-card-hover border border-border'
               }`}
             >
               <ListFilter className="w-4 h-4" />
@@ -256,10 +372,10 @@ export function App() {
             <button
               onClick={() => setActiveTab('calendar')}
               id="tab-hearing-calendar"
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 btn-premium transition-all ${
                 activeTab === 'calendar'
-                  ? 'bg-primary-muted text-foreground border border-primary-text'
-                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
+                  ? 'bg-primary-btn text-white shadow-sm ring-2 ring-primary-btn/20'
+                  : 'bg-card text-muted-foreground hover:text-foreground hover:bg-card-hover border border-border'
               }`}
             >
               <Calendar className="w-4 h-4" />
@@ -271,17 +387,17 @@ export function App() {
             <div className="flex items-center gap-2 text-xs">
               <button
                 onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                className="p-2 rounded-lg bg-card border border-border hover:bg-card-hover text-foreground flex items-center gap-1"
+                className="p-2 rounded-lg bg-card border border-border hover:bg-card-hover text-foreground flex items-center gap-1 shadow-sm"
                 title={`Sort order: ${sortOrder.toUpperCase()}`}
               >
-                <ArrowUpDown className="w-3.5 h-3.5" />
+                <ArrowUpDown className="w-3.5 h-3.5 text-primary-text" />
                 <span className="text-[11px] font-mono">{sortOrder.toUpperCase()}</span>
               </button>
 
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-card border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                className="bg-card border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-btn focus:ring-2 focus:ring-primary-btn/20 shadow-sm transition-all"
               >
                 <option value="hearingDate">Sort by Hearing Date</option>
                 <option value="createdAt">Sort by Registered Date</option>
@@ -303,7 +419,7 @@ export function App() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search by Summon #, FIR, Person name, Address, Court or PS..."
-                  className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                  className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary-btn focus:ring-2 focus:ring-primary-btn/20 shadow-sm transition-all"
                 />
                 {searchQuery && (
                   <button
@@ -321,10 +437,10 @@ export function App() {
                   <button
                     key={status}
                     onClick={() => setStatusFilter(status)}
-                    className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                    className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
                       statusFilter === status
-                        ? 'bg-primary-btn text-white font-bold'
-                        : 'bg-card border border-border text-muted-foreground hover:text-foreground'
+                        ? 'bg-primary-btn text-white font-bold shadow-sm'
+                        : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-card-hover'
                     }`}
                   >
                     {status}

@@ -237,8 +237,27 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     reader.readAsDataURL(file);
   };
 
+  // Helper to sanitize technical AI error messages into professional judicial guidance
+  const sanitizeOcrNotice = (msg: string | null | undefined): string => {
+    if (!msg) return '';
+    let clean = msg;
+    if (clean.includes('{') && clean.includes('}')) {
+      try {
+        const start = clean.indexOf('{');
+        const end = clean.lastIndexOf('}');
+        const parsed = JSON.parse(clean.slice(start, end + 1));
+        if (parsed?.error?.message) {
+          clean = parsed.error.message;
+        }
+      } catch (_) {}
+    }
+    if (clean.includes('503') || clean.includes('high demand') || clean.includes('UNAVAILABLE') || clean.includes('busy')) {
+      return 'The AI document extraction service was temporarily experiencing peak demand. Click "Retry AI Scan" to re-process with our high-speed engine, or enter details below.';
+    }
+    return clean;
+  };
+
   // Trigger AI OCR extraction pipeline with visual phases
-  
   const triggerOcrPipeline = async (dataUrl: string, mime: string) => {
     if (isExtracting) return; // Prevent concurrent OCR runs
     setCurrentStep('processing');
@@ -282,17 +301,17 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       if (data.urgency) setUrgency(data.urgency);
 
       setOcrSuccess(result.success);
-      setOcrMessage(result.message || null);
+      setOcrMessage(result.message ? sanitizeOcrNotice(result.message) : null);
 
       if (result.success && detected.size > 0) {
         showToast(`AI OCR extracted ${detected.size} fields from document`, 'success', 'Scan Complete');
       } else if (!result.success) {
-        showToast(result.message || 'Manual entry required.', 'warning', 'OCR Notice');
+        showToast(sanitizeOcrNotice(result.message) || 'Manual entry required.', 'warning', 'OCR Notice');
       }
     } catch (err: any) {
       console.warn('OCR Pipeline caught error:', err);
       setOcrSuccess(false);
-      setOcrMessage(err.message || 'Document OCR scan did not complete. Please enter details manually.');
+      setOcrMessage(sanitizeOcrNotice(err.message) || 'Document OCR scan did not complete. Please enter details manually.');
       showToast('Document scan could not complete. Please enter details manually.', 'warning', 'Scan Notice');
     } finally {
       setIsExtracting(false);
@@ -554,7 +573,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         <div className="bg-background-alt border-b border-border px-5 sm:px-6 py-4 sticky top-0 z-20 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-primary-muted text-primary-text border border-border-strong">
+              <div className="p-2 rounded-xl bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] dark:bg-primary-muted dark:text-primary-text dark:border-border-strong">
                 <FileText className="w-5 h-5" />
               </div>
               <div>
@@ -586,7 +605,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               onClick={() => setCurrentStep('upload')}
               className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
                 currentStep === 'upload'
-                  ? 'bg-primary-muted text-foreground border border-primary-text'
+                  ? 'bg-primary-btn text-white shadow-sm'
                   : 'bg-card text-muted-foreground border border-border'
               }`}
             >
@@ -596,7 +615,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
             <div
               className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
                 currentStep === 'processing'
-                  ? 'bg-warning-muted text-warning border border-warning'
+                  ? 'bg-amber-500 text-white shadow-sm dark:bg-warning-muted dark:text-warning dark:border-warning'
                   : 'bg-card text-muted-foreground border border-border'
               }`}
             >
@@ -608,7 +627,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               onClick={() => setCurrentStep('review')}
               className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
                 currentStep === 'review'
-                  ? 'bg-primary-muted text-foreground border border-primary-text'
+                  ? 'bg-primary-btn text-white shadow-sm'
                   : 'bg-card text-muted-foreground border border-border'
               }`}
             >
@@ -739,7 +758,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
               {/* QR Scanner Drawer */}
               {isQrActive && (
-                <div className="backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-5 space-y-4 shadow-premium animate-scaleIn">
+                <div className="bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-5 space-y-4 shadow-sm animate-scaleIn">
                   <div className="flex items-center justify-between pb-2 border-b border-border">
                     <span className="text-xs font-bold text-foreground flex items-center gap-2">
                       <QrCode className="w-4 h-4 text-warning" />
@@ -764,8 +783,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       onClick={qrScanningLive ? stopQrCamera : handleStartQrCamera}
                       className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                         qrScanningLive
-                          ? 'bg-red-950/80 border border-red-800 text-red-300'
-                          : 'bg-primary-btn text-white hover:bg-primary-hover shadow'
+                          ? 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/80 dark:border-red-800 dark:text-red-300'
+                          : 'bg-primary-btn text-white hover:bg-primary-hover shadow-sm'
                       }`}
                     >
                       <Camera className="w-4 h-4" />
@@ -774,7 +793,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
                     <label
                       htmlFor="qr-file-upload"
-                      className="px-3.5 py-2 rounded-xl bg-muted hover:bg-primary-btn text-white border border-border-strong text-primary-text hover:text-foreground text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                      className="px-3.5 py-2 rounded-xl bg-card hover:bg-[#EFF6FF] text-[#1E3A8A] dark:bg-muted dark:text-white border border-border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
                     >
                       <input
                         id="qr-file-upload"
@@ -783,7 +802,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                         onChange={handleQrImageUpload}
                         className="hidden"
                       />
-                      <ImageIcon className="w-4 h-4" />
+                      <ImageIcon className="w-4 h-4 text-primary-text" />
                       <span>Upload QR Image</span>
                     </label>
                   </div>
@@ -832,13 +851,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       onChange={(e) => setQrInput(e.target.value)}
                       placeholder="e.g. CNR:DLCT010012342026; FIR:142/2026; Court:Tis Hazari; Accused:Sanjay Kumar; Date:2026-09-24"
                       rows={2}
-                      className="w-full bg-background border border-border rounded-xl p-2.5 text-xs text-foreground font-mono placeholder-muted-foreground-alt focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all resize-none"
+                      className="w-full bg-background border border-border rounded-xl p-2.5 text-xs text-foreground font-mono placeholder-muted-foreground-alt focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all resize-none"
                     />
                     <button
                       type="button"
                       onClick={handleApplyQr}
                       disabled={!qrInput.trim()}
-                      className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
                     >
                       Decode & Populate Particulars
                     </button>
@@ -905,7 +924,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
           {/* STEP 2: PROCESSING & AI TELEMETRY */}
           {currentStep === 'processing' && (
-            <div className="py-12 px-4 text-center space-y-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl">
+            <div className="py-12 px-4 text-center space-y-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl">
               <div className="relative w-16 h-16 mx-auto">
                 <div className="w-16 h-16 rounded-2xl bg-background-alt border border-border-strong flex items-center justify-center">
                   <Sparkles className="w-8 h-8 text-warning animate-pulse" />
@@ -931,17 +950,17 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               {/* Status & Autofill Banner */}
               {ocrMessage && (
                 <div
-                  className={`p-3.5 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                  className={`p-3.5 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 ${
                     ocrSuccess
-                      ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-200'
-                      : 'bg-amber-950/40 border-amber-700/60 text-amber-200'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-700/60 dark:text-emerald-200'
+                      : 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/40 dark:border-amber-700/60 dark:text-amber-200'
                   }`}
                 >
                   <div className="flex items-start gap-2.5">
                     {ocrSuccess ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                     ) : (
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                     )}
                     <div>
                       <span className="font-bold block mb-0.5">
@@ -956,13 +975,30 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setCurrentStep('upload')}
-                    className="text-[11px] underline shrink-0 hover:opacity-80"
-                  >
-                    Change Document
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                    {!ocrSuccess && attachmentPreview && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          triggerOcrPipeline(
+                            attachmentPreview,
+                            attachmentPreview.startsWith('data:application/pdf') ? 'application/pdf' : 'image/jpeg'
+                          )
+                        }
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-[11px] font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        Retry AI Scan
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep('upload')}
+                      className="text-[11px] underline hover:opacity-80 cursor-pointer"
+                    >
+                      Change Document
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -974,7 +1010,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               )}
 
               {/* SECTION A: WARRANT & CASE DETAILS */}
-              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <Shield className="w-3.5 h-3.5 text-warning" />
                   A. Warrant & Case Identifiers
@@ -985,7 +1021,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Summon / Warrant Number *</span>
                       {detectedFields.has('summonNumber') && (
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-700/50">
+                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
                       )}
@@ -996,8 +1032,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={summonNumber}
                       onChange={(e) => setSummonNumber(e.target.value)}
                       placeholder="e.g. SUM/2026/0892 or WAR-112"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
-                        detectedFields.has('summonNumber') ? 'border-emerald-600/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                        detectedFields.has('summonNumber') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                       required
                     />
@@ -1007,7 +1043,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Case / FIR Number *</span>
                       {detectedFields.has('caseNumber') && (
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-700/50">
+                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
                       )}
@@ -1018,8 +1054,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={caseNumber}
                       onChange={(e) => setCaseNumber(e.target.value)}
                       placeholder="e.g. FIR No. 248/2025 PS Tis Hazari"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
-                        detectedFields.has('caseNumber') ? 'border-emerald-600/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                        detectedFields.has('caseNumber') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                       required
                     />
@@ -1032,7 +1068,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <select
                       value={urgency}
                       onChange={(e) => setUrgency(e.target.value as SummonUrgency)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     >
                       <option value="Standard">Standard</option>
                       <option value="High">High Priority</option>
@@ -1045,7 +1081,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <select
                       value={status}
                       onChange={(e) => setStatus(e.target.value as SummonStatus)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     >
                       <option value="Pending">Pending Service</option>
                       <option value="Upcoming">Upcoming Court</option>
@@ -1059,7 +1095,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       type="date"
                       value={issueDate}
                       onChange={(e) => setIssueDate(e.target.value)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     />
                   </div>
 
@@ -1067,7 +1103,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Hearing Date *</span>
                       {detectedFields.has('hearingDate') && (
-                        <span className="text-[10px] font-mono text-emerald-400">AI</span>
+                        <span className="text-[10px] font-mono text-emerald-800 dark:text-emerald-400">AI</span>
                       )}
                     </label>
                     <input
@@ -1075,8 +1111,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       id="input-hearing-date"
                       value={hearingDate}
                       onChange={(e) => setHearingDate(e.target.value)}
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
-                        detectedFields.has('hearingDate') ? 'border-emerald-600/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                        detectedFields.has('hearingDate') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                       required
                     />
@@ -1085,7 +1121,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               </div>
 
               {/* SECTION B: RESPONDENT & SERVING ADDRESS */}
-              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                     <MapPin className="w-3.5 h-3.5 text-warning" />
@@ -1097,7 +1133,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       type="button"
                       onClick={() => setIsSelectPersonOpen(true)}
                       id="btn-select-someone"
-                      className="px-2.5 py-1 bg-muted hover:bg-primary-btn text-white hover:text-foreground rounded-lg text-xs font-medium flex items-center gap-1.5 border border-border-strong transition-colors cursor-pointer"
+                      className="px-2.5 py-1 bg-card hover:bg-[#EFF6FF] text-[#1E3A8A] dark:bg-muted dark:text-white rounded-lg text-xs font-medium flex items-center gap-1.5 border border-border transition-colors cursor-pointer shadow-sm"
                     >
                       <UserCheck className="w-3.5 h-3.5 text-warning" />
                       <span>Select Someone</span>
@@ -1106,7 +1142,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       type="button"
                       onClick={() => setIsAddPersonDirectOpen(true)}
                       id="btn-add-someone"
-                      className="px-2.5 py-1 bg-primary-btn text-white hover:bg-primary-hover rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                      className="px-2.5 py-1 bg-primary-btn text-white hover:bg-primary-hover rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Someone</span>
@@ -1119,7 +1155,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Respondent / Accused Full Name *</span>
                       {detectedFields.has('personName') && (
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-700/50">
+                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
                       )}
@@ -1130,8 +1166,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={personName}
                       onChange={(e) => setPersonName(e.target.value)}
                       placeholder="e.g. Ramesh Chandra / Rajesh Gupta"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
-                        detectedFields.has('personName') ? 'border-emerald-600/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                        detectedFields.has('personName') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                       required
                     />
@@ -1141,7 +1177,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Father / Husband / Guardian Name</span>
                       {detectedFields.has('fatherName') && (
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-700/50">
+                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
                       )}
@@ -1151,8 +1187,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={fatherName}
                       onChange={(e) => setFatherName(e.target.value)}
                       placeholder="e.g. Sh. Harish Chandra"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
-                        detectedFields.has('fatherName') ? 'border-emerald-600/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                        detectedFields.has('fatherName') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                     />
                   </div>
@@ -1162,7 +1198,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                     <span className="font-semibold text-foreground">Complete Delivery / Serving Address *</span>
                     {detectedFields.has('address') && (
-                      <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-700/50">
+                      <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                         AI Autofilled
                       </span>
                     )}
@@ -1173,8 +1209,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="House/Flat number, Street, Landmark, Village/Colony, Pincode for field officer delivery..."
                     rows={3}
-                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all ${
-                      detectedFields.has('address') ? 'border-emerald-600/60' : 'border-border'
+                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                      detectedFields.has('address') ? 'border-emerald-500/60' : 'border-border'
                     }`}
                     required
                   />
@@ -1182,7 +1218,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               </div>
 
               {/* SECTION C: COURT & CHARGES */}
-              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <Building2 className="w-3.5 h-3.5 text-warning" />
                   C. Judicial Court & Offense Sections
@@ -1193,7 +1229,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Court / Bench Name *</span>
                       {detectedFields.has('courtName') && (
-                        <span className="text-[10px] font-mono text-emerald-400">AI</span>
+                        <span className="text-[10px] font-mono text-emerald-800 dark:text-emerald-400">AI</span>
                       )}
                     </label>
                     <input
@@ -1202,7 +1238,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtName}
                       onChange={(e) => setCourtName(e.target.value)}
                       placeholder="e.g. Chief Metropolitan Magistrate Court"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                       required
                     />
                   </div>
@@ -1216,7 +1252,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtAddress}
                       onChange={(e) => setCourtAddress(e.target.value)}
                       placeholder="e.g. Room No. 14, Tis Hazari Courts Complex, Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     />
                   </div>
                 </div>
@@ -1229,7 +1265,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={policeStation}
                       onChange={(e) => setPoliceStation(e.target.value)}
                       placeholder="e.g. PS Tis Hazari"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     />
                   </div>
 
@@ -1240,7 +1276,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={district}
                       onChange={(e) => setDistrict(e.target.value)}
                       placeholder="e.g. Central Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     />
                   </div>
 
@@ -1251,7 +1287,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={issuingAuthority}
                       onChange={(e) => setIssuingAuthority(e.target.value)}
                       placeholder="e.g. Judicial Magistrate 1st Class"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                     />
                   </div>
                 </div>
@@ -1265,14 +1301,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     value={offenseCharges}
                     onChange={(e) => setOffenseCharges(e.target.value)}
                     placeholder="e.g. Under Section 138 NI Act / 420 IPC"
-                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all"
+                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
                   />
                 </div>
               </div>
 
 
               {/* SECTION D: SUMMONS PHOTO (OPTIONAL) */}
-              <div className="space-y-3 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <ImageIcon className="w-3.5 h-3.5 text-warning" />
                   D. Summons Photo (Optional)
@@ -1305,7 +1341,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                           setAttachmentType(null);
                           setFileName('');
                         }}
-                        className="px-4 py-2 rounded-xl text-red-400 hover:bg-red-950/30 text-[11px] font-medium cursor-pointer transition-colors"
+                        className="px-4 py-2 rounded-xl text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-[11px] font-medium cursor-pointer transition-colors"
                       >
                         Remove Photo
                       </button>
@@ -1364,7 +1400,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     type="submit"
                     disabled={isSubmitting}
                     id="btn-save-summon-submit"
-                    className="px-6 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] transition-all disabled:opacity-50 cursor-pointer"
+                    className="px-6 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center gap-2 shadow-md hover:shadow-lg transition-all disabled:opacity-50 cursor-pointer"
                   >
                     {saveSuccess ? (
                       <>

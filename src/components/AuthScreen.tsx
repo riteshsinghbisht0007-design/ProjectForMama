@@ -18,6 +18,7 @@ import { useAuth } from '../context/AuthContext';
 export const AuthScreen: React.FC = () => {
   const {
     loginWithGoogle,
+    loginWithGoogleFallback,
     loginWithFacebook,
     loginWithCredentials,
     registerOfficer,
@@ -37,12 +38,18 @@ export const AuthScreen: React.FC = () => {
   const [localError, setLocalError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
 
   const rawError = localError || authError;
   const displayError =
     rawError && (rawError.toLowerCase().includes('api-key') || rawError.toLowerCase().includes('api key'))
       ? null
       : rawError;
+
+  const isDomainError =
+    Boolean(displayError) &&
+    (displayError!.toLowerCase().includes('unauthorized-domain') ||
+      displayError!.toLowerCase().includes('domain not authorized'));
 
   const handleGoogleAuth = async () => {
     setLocalError(null);
@@ -52,7 +59,18 @@ export const AuthScreen: React.FC = () => {
     try {
       await loginWithGoogle();
     } catch (err: any) {
-      setLocalError(err.message || 'Google sign-in failed');
+      console.warn('[AuthScreen] Google auth notice:', err.message || err);
+      const msg = err.message || '';
+      if (msg.includes('auth/unauthorized-domain') || msg.includes('unauthorized-domain') || err.code === 'auth/unauthorized-domain') {
+        try {
+          await loginWithGoogleFallback();
+          return;
+        } catch (fallbackErr: any) {
+          setLocalError(fallbackErr.message || 'Google sign-in failed');
+        }
+      } else {
+        setLocalError(msg || 'Google sign-in failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -207,21 +225,70 @@ export const AuthScreen: React.FC = () => {
         </div>
 
         {/* Auth Card */}
-        <div className="backdrop-blur-xl bg-card/80 border border-white/10 dark:border-white/5 rounded-2xl p-6 sm:p-8 shadow-[0_8px_32px_rgba(0,0,0,0.12)] space-y-5 relative group transition-all duration-500 hover:border-cyan-500/30">
-          <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" />
+        <div className="bg-card border border-border rounded-2xl p-6 sm:p-8 shadow-sm space-y-5 relative group transition-all duration-300 hover:border-[#60A5FA]">
           {displayError && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-900 dark:text-red-200 flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
-              <div className="flex-1">
-                <span className="font-semibold block mb-0.5">Authentication Notice</span>
-                <span>{displayError}</span>
+            isDomainError ? (
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs space-y-2.5">
+                <div className="flex items-center gap-2 text-amber-500 font-semibold">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>Google Sign-In: Domain Whitelist Required</span>
+                </div>
+                <p className="text-muted-foreground leading-relaxed">
+                  Firebase Authentication requires your current preview domain to be registered before Google OAuth can authenticate:
+                </p>
+                <div className="p-2 bg-background/80 rounded-lg border border-border flex items-center justify-between gap-2">
+                  <code className="font-mono text-[11px] text-foreground truncate select-all">
+                    {typeof window !== 'undefined' ? window.location.hostname : ''}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        navigator.clipboard.writeText(window.location.hostname);
+                        setCopiedDomain(true);
+                        setTimeout(() => setCopiedDomain(false), 2000);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded bg-secondary hover:bg-muted text-[11px] font-medium text-foreground transition-colors shrink-0 cursor-pointer"
+                  >
+                    {copiedDomain ? 'Copied!' : 'Copy Domain'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  <strong>In Firebase Console:</strong> Authentication → Settings → Authorized domains → Add domain.
+                </p>
+                <div className="pt-1.5 border-t border-amber-500/20">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handlePresetLogin(
+                        'Sub-Insp. Rajesh Sharma',
+                        'DL-POL-4402',
+                        'Connaught Place PS',
+                        'Sub-Inspector'
+                      )
+                    }
+                    className="w-full py-2 px-3 rounded-lg bg-primary-btn hover:bg-primary-hover text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                  >
+                    <span>Instant Demo Login (No Firebase Config Needed)</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-900 dark:text-red-200 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                <div className="flex-1">
+                  <span className="font-semibold block mb-0.5">Authentication Notice</span>
+                  <span>{displayError}</span>
+                </div>
+              </div>
+            )
           )}
 
           {resetSuccess && (
-            <div className="p-3 bg-emerald-950/60 border border-emerald-700 rounded-xl text-xs text-emerald-200 flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+            <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-200 rounded-xl text-xs flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
               <div className="flex-1">
                 <span className="font-semibold block mb-0.5">Password Reset Dispatched</span>
                 <span>{resetSuccess}</span>
@@ -287,7 +354,7 @@ export const AuthScreen: React.FC = () => {
                   onClick={handleGoogleAuth}
                   disabled={loading}
                   id="btn-google-login"
-                  className="relative z-10 w-full py-2.5 px-4 rounded-xl border border-border-strong bg-card-hover hover:bg-muted hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] hover:border-cyan-500/50 text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-all duration-300 disabled:opacity-50 cursor-pointer"
+                  className="relative z-10 w-full py-2.5 px-4 rounded-xl border border-border bg-card hover:bg-card-hover hover:border-[#2563EB] text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-all duration-200 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin text-primary-text" />
@@ -320,7 +387,7 @@ export const AuthScreen: React.FC = () => {
                   onClick={handleFacebookAuth}
                   disabled={loading}
                   id="btn-facebook-login"
-                  className="w-full py-2.5 px-4 rounded-xl border border-border bg-[#1877F2]/15 text-xs font-semibold text-primary-text-bright flex items-center justify-center gap-3 btn-premium cursor-pointer"
+                  className="w-full py-2.5 px-4 rounded-xl border border-[#1877F2]/30 bg-[#1877F2]/10 hover:bg-[#1877F2]/20 text-xs font-semibold text-[#1877F2] flex items-center justify-center gap-3 transition-colors shadow-sm cursor-pointer"
                 >
                   <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
                     <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
@@ -470,7 +537,7 @@ export const AuthScreen: React.FC = () => {
                 type="submit"
                 disabled={loading}
                 id="auth-submit-btn"
-                className="relative z-10 w-full py-2.5 px-4 rounded-xl bg-primary-btn text-white hover:bg-primary-hover hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] text-xs font-bold flex items-center justify-center gap-2 transition-all duration-300 shadow-lg disabled:opacity-50 cursor-pointer mt-2"
+                className="relative z-10 w-full py-2.5 px-4 rounded-xl bg-primary-btn text-white hover:bg-primary-hover shadow-sm hover:shadow-md text-xs font-bold flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-50 cursor-pointer mt-2"
               >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

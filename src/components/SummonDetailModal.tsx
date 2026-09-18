@@ -286,10 +286,10 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
             <div
               className={`p-2 rounded-lg ${
                 summon.status === 'Completed'
-                  ? 'bg-emerald-950/80 text-emerald-400'
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/80 dark:text-emerald-400'
                   : summon.urgency === 'Urgent'
-                  ? 'bg-red-950/80 text-red-400'
-                  : 'bg-primary-muted text-primary-text'
+                  ? 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/80 dark:text-red-400'
+                  : 'bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] dark:bg-primary-muted dark:text-primary-text'
               }`}
             >
               <Shield className="w-5 h-5" />
@@ -298,18 +298,18 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-bold text-foreground font-mono">{summon.summonNumber}</h2>
                 <span
-                  className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded-full ${
+                  className={`px-2.5 py-0.5 text-[10px] font-bold uppercase rounded-full ${
                     summon.status === 'Completed'
-                      ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-500/40'
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-500/40'
                       : summon.status === 'Upcoming'
-                      ? 'bg-blue-900/60 text-blue-300 border border-blue-500/40'
-                      : 'bg-amber-900/60 text-amber-300 border border-amber-500/40'
+                      ? 'bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-900/60 dark:text-blue-300 dark:border-blue-500/40'
+                      : 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-900/60 dark:text-amber-300 dark:border-amber-500/40'
                   }`}
                 >
                   {summon.status}
                 </span>
                 {summon.urgency === 'Urgent' && (
-                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-red-900/80 text-red-200 border border-red-500">
+                  <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase rounded-full bg-red-50 text-red-800 border border-red-200 dark:bg-red-900/80 dark:text-red-200 dark:border-red-500">
                     Urgent
                   </span>
                 )}
@@ -324,7 +324,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               title="Toggle Hearing Reminder"
               className={`p-2 rounded-lg border transition-colors cursor-pointer ${
                 summon.reminderEnabled
-                  ? 'bg-warning/20 border-warning text-warning'
+                  ? 'bg-amber-50 border-amber-300 text-amber-800 dark:bg-warning/20 dark:border-warning dark:text-warning'
                   : 'bg-card border-border text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -345,9 +345,9 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           <div
             className={`p-4 rounded-xl border flex items-center justify-between ${
               summon.status === 'Completed'
-                ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-300'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-700/50 dark:text-emerald-300'
                 : diffDays <= 2
-                ? 'bg-red-950/40 border-red-800/60 text-red-300'
+                ? 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950/40 dark:border-red-800/60 dark:text-red-300'
                 : 'bg-card border-border text-foreground'
             }`}
           >
@@ -374,7 +374,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
             {summon.status !== 'Completed' && (
               <button
                 onClick={() => setShowMarkServedModal(true)}
-                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-foreground font-bold text-xs rounded-lg flex items-center gap-1.5 shadow cursor-pointer"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" /> Mark Served
               </button>
@@ -383,7 +383,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
           {/* Served Details if completed */}
           {summon.status === 'Completed' && summon.servedNotes && (
-            <div className="p-3.5 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-xs text-emerald-200">
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-800/40 dark:text-emerald-200">
               <span className="font-bold block mb-1 font-mono">Serving Officer Confirmation Notes:</span>
               <p>{summon.servedNotes}</p>
             </div>
@@ -476,9 +476,9 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           )}
 
           {summon.pdfUrl && (
-            <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl flex items-center justify-between">
+            <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-muted rounded-lg text-primary-text">
+                <div className="p-2.5 bg-[#EFF6FF] dark:bg-muted rounded-lg text-primary-text">
                   <FileText className="w-5 h-5" />
                 </div>
                 <div>
@@ -490,7 +490,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                 href={summon.pdfUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="px-3 py-1.5 rounded-lg bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center gap-1.5 transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
               >
                 <ExternalLink className="w-3.5 h-3.5" /> View PDF
               </a>
@@ -506,7 +506,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               {!isEditing ? (
                 <button
                   onClick={handleStartEdit}
-                  className="text-xs text-warning hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs text-primary-text hover:underline flex items-center gap-1 cursor-pointer font-semibold"
                 >
                   <Edit2 className="w-3.5 h-3.5" /> Edit Details
                 </button>
@@ -515,7 +515,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                   <button
                   onClick={handleSaveEdit}
                   disabled={saveStatus === 'saving'}
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer disabled:opacity-50"
+                  className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer disabled:opacity-50"
                 >
                   {saveStatus === 'saving' ? (
                     <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
@@ -542,13 +542,13 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
             </div>
 
             {/* Respondent & Address Box */}
-            <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl space-y-3">
+            <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl space-y-3">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-muted text-info-text shrink-0 mt-1">
+                <div className="p-2 rounded-lg bg-[#EFF6FF] dark:bg-muted text-primary-text shrink-0 mt-1">
                   <User className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-[11px] text-muted-foreground uppercase">Person Summoned</span>
+                  <span className="text-[11px] text-muted-foreground uppercase font-semibold">Person Summoned</span>
                   {isEditing ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
                       <input
@@ -581,11 +581,11 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
               {/* Full Address Highlight */}
               <div className="flex items-start gap-3 pt-2 border-t border-border">
-                <div className="p-2 rounded-lg bg-warning-muted text-warning shrink-0 mt-1">
+                <div className="p-2 rounded-lg bg-amber-100 text-amber-800 dark:bg-warning-muted dark:text-warning shrink-0 mt-1">
                   <MapPin className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-[11px] font-bold text-warning uppercase font-mono">
+                  <span className="text-[11px] font-bold text-amber-800 dark:text-warning uppercase font-mono">
                     Full Residential / Serving Address
                   </span>
                   {isEditing ? (
@@ -609,9 +609,9 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
             {/* Court & Appearance Box */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                  <Building2 className="w-3.5 h-3.5 text-info-text" />
+              <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 font-semibold">
+                  <Building2 className="w-3.5 h-3.5 text-primary-text" />
                   <span>COURT & BENCH</span>
                 </div>
                 {isEditing ? (
@@ -642,8 +642,8 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                 )}
               </div>
 
-              <div className="p-4 backdrop-blur-md bg-card/80 border border-white/5 shadow-sm hover:border-cyan-500/30 transition-all duration-300 rounded-xl">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 font-semibold">
                   <Calendar className="w-3.5 h-3.5 text-warning" />
                   <span>HEARING TIMELINE</span>
                 </div>
@@ -730,7 +730,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           <button
             onClick={handleDelete}
             disabled={isDeleting}
-            className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1.5 p-2 rounded-lg hover:bg-red-950/40 transition-colors cursor-pointer"
+            className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 flex items-center gap-1.5 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
           >
             <Trash2 className="w-4 h-4" /> Delete Record
           </button>
@@ -738,31 +738,31 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleCopyText}
-              className="px-3.5 py-2 rounded-xl border border-border hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl border border-border bg-card hover:bg-[#EFF6FF] dark:hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
             >
-              {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              {copied ? <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied' : 'Copy Notice Text'}
             </button>
 
             <button
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf}
-              className="px-3.5 py-2 rounded-xl bg-border hover:bg-primary-btn text-white hover:text-foreground text-xs font-bold flex items-center gap-1.5 border border-border-strong transition-colors disabled:opacity-50 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-card hover:bg-[#EFF6FF] text-foreground text-xs font-bold flex items-center gap-1.5 border border-border transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
             >
-              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-warning" /> : <FileText className="w-4 h-4 text-warning" />}
+              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-warning" /> : <FileText className="w-4 h-4 text-primary-text" />}
               <span>Notice PDF</span>
             </button>
 
             <button
               onClick={() => onOpenSplitScreenshot(summon)}
-              className="px-4 py-2 rounded-xl bg-primary-muted hover:bg-primary-btn text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#1E3A8A] dark:bg-primary-muted dark:hover:bg-primary-btn dark:text-white text-xs font-bold flex items-center gap-1.5 border border-[#DBEAFE] dark:border-transparent transition-colors cursor-pointer shadow-sm"
             >
-              <FileImage className="w-4 h-4" /> Visual Split Copy
+              <FileImage className="w-4 h-4 text-primary-text" /> Visual Split Copy
             </button>
 
             <button
               onClick={handleForwardNative}
-              className="px-5 py-2 rounded-xl bg-primary-hover hover:bg-blue-600 text-foreground text-xs font-bold flex items-center gap-1.5 shadow transition-colors cursor-pointer"
+              className="px-5 py-2 rounded-xl bg-primary-btn hover:bg-primary-hover text-white text-xs font-bold flex items-center gap-1.5 shadow transition-colors cursor-pointer"
             >
               <Share2 className="w-4 h-4" /> Forward Summon
             </button>

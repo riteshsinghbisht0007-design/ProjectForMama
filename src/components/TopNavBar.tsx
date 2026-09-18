@@ -63,8 +63,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Left: Branding & Emblem */}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-muted to-background-alt border border-border-strong flex items-center justify-center shadow-inner">
-            <Shield className="w-5 h-5 text-info-text" />
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#EFF6FF] to-[#DBEAFE] dark:from-primary-muted dark:to-background-alt border border-[#DBEAFE] dark:border-border-strong flex items-center justify-center shadow-inner">
+            <Shield className="w-5 h-5 text-primary-text" />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -80,14 +80,14 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
         </div>
 
         {/* Center: Live Telemetry */}
-        <div className="hidden lg:flex items-center gap-4 bg-background px-3.5 py-1.5 rounded-lg border border-border">
+        <div className="hidden lg:flex items-center gap-4 bg-card px-3.5 py-1.5 rounded-lg border border-border shadow-sm">
           <div className="flex items-center gap-2 text-xs font-mono text-foreground">
             <Clock className="w-3.5 h-3.5 text-warning" />
             <span>{timeStr}</span>
           </div>
           <span className="h-3 w-px bg-border"></span>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
             <span>Encrypted Cloud Sync</span>
           </div>
         </div>
@@ -97,7 +97,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           {currentUser && (
             <div className="hidden sm:flex flex-col text-right">
               <span className="text-xs font-medium text-foreground">{currentUser.displayName}</span>
-              <span className="text-[11px] font-mono text-warning">
+              <span className="text-[11px] font-mono text-warning font-semibold">
                 Badge #{currentUser.badgeNumber}
               </span>
             </div>
@@ -108,7 +108,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           <button
             onClick={toggleTheme}
             title="Toggle theme"
-            className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:shadow-[0_0_10px_rgba(6,182,212,0.4)] btn-premium cursor-pointer"
+            className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
           >
             {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
@@ -119,7 +119,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
               onClick={onOpenWitnessDirectory}
               id="witness-directory-btn"
               title="Witness & People Directory"
-              className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:shadow-[0_0_10px_rgba(6,182,212,0.4)] btn-premium cursor-pointer"
+              className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
             >
               <Users className="w-4 h-4" />
             </button>
@@ -130,11 +130,11 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             onClick={onOpenAlerts}
             id="alerts-bell-btn"
             title="Judicial hearing alerts"
-            className="relative p-2 rounded-lg bg-card border border-border text-foreground btn-premium cursor-pointer"
+            className="relative p-2 rounded-lg bg-card border border-border text-foreground hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
           >
             <Bell className="w-4 h-4" />
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-foreground text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
                 {unreadCount}
               </span>
             )}

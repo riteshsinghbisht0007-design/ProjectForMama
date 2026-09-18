@@ -240,7 +240,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                       onClick={() => setRoleFilter(r)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                         roleFilter === r
-                          ? 'bg-warning text-warning-muted font-bold'
+                          ? 'bg-primary-btn text-white font-bold shadow-sm'
                           : 'bg-card text-muted-foreground hover:text-foreground border border-border'
                       }`}
                     >
@@ -256,7 +256,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   Loading directory records from Firestore…
                 </div>
               ) : filteredWitnesses.length === 0 ? (
-                <div className="py-16 text-center space-y-3 bg-card border border-border rounded-2xl p-8">
+                <div className="py-16 text-center space-y-3 bg-card border border-border rounded-2xl p-8 shadow-sm">
                   <Shield className="w-10 h-10 text-muted-foreground mx-auto opacity-40" />
                   <h4 className="text-sm font-bold text-foreground">No Records Found</h4>
                   <p className="text-xs text-muted-foreground max-w-sm mx-auto">
@@ -267,7 +267,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   <button
                     type="button"
                     onClick={handleOpenAdd}
-                    className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer"
+                    className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer shadow-sm"
                   >
                     <Plus className="w-4 h-4" /> Add Someone Now
                   </button>
@@ -277,7 +277,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                   {filteredWitnesses.map((w) => (
                     <div
                       key={w.id}
-                      className="p-4 bg-card border border-border hover:border-border-strong rounded-2xl space-y-3 transition-all flex flex-col justify-between"
+                      className="p-4 bg-card border border-border hover:border-border-strong rounded-2xl space-y-3 transition-all flex flex-col justify-between shadow-sm"
                     >
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
@@ -290,10 +290,10 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <span
                             className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase font-bold ${
                               w.role === 'Witness'
-                                ? 'bg-blue-950 text-blue-300 border border-blue-800'
+                                ? 'bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800'
                                 : w.role === 'Accused'
-                                ? 'bg-red-950 text-red-300 border border-red-800'
-                                : 'bg-warning-muted text-warning border border-warning/30'
+                                ? 'bg-red-50 text-red-700 border border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
+                                : 'bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-warning-muted dark:text-warning dark:border-warning/30'
                             }`}
                           >
                             {w.role}
@@ -323,7 +323,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           )}
 
                           {w.summonCaseNo && (
-                            <div className="text-[11px] text-warning">
+                            <div className="text-[11px] text-[#2563EB] dark:text-warning font-medium">
                               Linked Case: <span className="font-mono">{w.summonCaseNo}</span>
                             </div>
                           )}
@@ -346,7 +346,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                             className="p-1.5 rounded-lg text-muted-foreground btn-premium cursor-pointer"
                           >
                             {copiedId === w.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
                             )}
@@ -372,7 +372,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleDelete(w.id, w.name)}
-                            className="p-1.5 rounded-lg hover:bg-red-950/40 text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-600 text-muted-foreground dark:hover:bg-red-950/40 dark:text-red-400 dark:hover:text-red-300 transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

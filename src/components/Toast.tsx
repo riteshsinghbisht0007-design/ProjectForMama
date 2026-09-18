@@ -47,21 +47,21 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 ${
+            className={`pointer-events-auto flex items-start gap-3 p-3.5 rounded-xl border shadow-lg backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 ${
               toast.type === 'success'
-                ? 'bg-success-muted/90 border-emerald-500/50 text-foreground'
+                ? 'bg-emerald-50 dark:bg-emerald-950/90 border-emerald-200 dark:border-emerald-500/50 text-emerald-900 dark:text-emerald-100'
                 : toast.type === 'error'
                 ? 'bg-red-50 dark:bg-red-950/95 border-red-200 dark:border-red-600/70 text-red-900 dark:text-red-100'
                 : toast.type === 'warning'
                 ? 'bg-amber-50 dark:bg-amber-950/95 border-amber-200 dark:border-amber-500/60 text-amber-900 dark:text-amber-100'
-                : 'bg-card/95 border-border-strong text-foreground'
+                : 'bg-card border-border text-foreground'
             }`}
           >
             <div className="shrink-0 mt-0.5">
-              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-              {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-red-400" />}
-              {toast.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-400" />}
-              {toast.type === 'info' && <Info className="w-4 h-4 text-primary-text" />}
+              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+              {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />}
+              {toast.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />}
+              {toast.type === 'info' && <Info className="w-4 h-4 text-[#2563EB] dark:text-primary-text" />}
             </div>
 
             <div className="flex-1 min-w-0">

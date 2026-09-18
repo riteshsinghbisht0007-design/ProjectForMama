@@ -71,9 +71,28 @@ export class InMemoryCollection {
     return { insertedId: item._id };
   }
 
-  async updateOne(filter: any, update: any) {
+  async insertMany(docs: any[]) {
+    const insertedIds: any[] = [];
+    for (const doc of docs) {
+      const res = await this.insertOne(doc);
+      insertedIds.push(res.insertedId);
+    }
+    return { insertedIds, insertedCount: docs.length };
+  }
+
+  async updateOne(filter: any, update: any, options?: any) {
     const index = this.items.findIndex((item) => this.matchesQuery(item, filter));
     if (index === -1) {
+      if (options?.upsert) {
+        const newDoc: any = {};
+        if (update.$setOnInsert) Object.assign(newDoc, update.$setOnInsert);
+        if (update.$set) Object.assign(newDoc, update.$set);
+        if (!newDoc._id) {
+          newDoc._id = 'mock_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+        }
+        this.items.push(newDoc);
+        return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1, upsertedId: newDoc._id };
+      }
       return { matchedCount: 0, modifiedCount: 0 };
     }
     if (update.$set) {
@@ -152,6 +171,7 @@ export function createInMemoryDatabase() {
     summons: new InMemoryCollection(),
     witnesses: new InMemoryCollection(),
     notifications: new InMemoryCollection(),
+    fcm_tokens: new InMemoryCollection(),
     test_connection: new InMemoryCollection(),
   };
 

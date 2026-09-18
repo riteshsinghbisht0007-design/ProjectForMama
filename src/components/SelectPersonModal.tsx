@@ -141,7 +141,7 @@ export const SelectPersonModal: React.FC<SelectPersonModalProps> = ({
                     onClick={() => setRoleFilter(r)}
                     className={`px-3 py-1 rounded-lg text-[11px] font-medium transition-colors ${
                       roleFilter === r
-                        ? 'bg-warning text-warning-muted font-bold'
+                        ? 'bg-primary-btn text-white font-bold shadow-sm'
                         : 'bg-card text-muted-foreground hover:text-foreground border border-border'
                     }`}
                   >
@@ -176,14 +176,14 @@ export const SelectPersonModal: React.FC<SelectPersonModalProps> = ({
                         onSelectPerson(p);
                         onClose();
                       }}
-                      className="p-3.5 bg-card border border-border hover:border-border-strong hover:bg-card-hover rounded-xl cursor-pointer transition-all flex items-center justify-between group"
+                      className="p-3.5 bg-card border border-border hover:border-border-strong hover:bg-card-hover rounded-xl cursor-pointer transition-all flex items-center justify-between group shadow-sm"
                     >
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-bold text-foreground text-sm group-hover:text-warning transition-colors">
+                          <span className="font-bold text-foreground text-sm group-hover:text-primary-text transition-colors">
                             {p.name}
                           </span>
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase bg-muted text-primary-text border border-border-strong">
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-muted dark:text-primary-text dark:border-border-strong">
                             {p.role}
                           </span>
                           {p.fatherName && (
@@ -207,7 +207,7 @@ export const SelectPersonModal: React.FC<SelectPersonModalProps> = ({
 
                       <button
                         type="button"
-                        className="p-2 rounded-lg bg-muted text-primary-text group-hover:bg-primary-btn text-white group-hover:text-white transition-colors shrink-0 ml-3"
+                        className="p-2 rounded-lg bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] group-hover:bg-[#2563EB] group-hover:text-white dark:bg-muted dark:text-primary-text transition-colors shrink-0 ml-3"
                       >
                         <UserCheck className="w-4 h-4" />
                       </button>

@@ -144,12 +144,12 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
               <button
                 key={dayStr}
                 onClick={() => setSelectedDateStr(dayStr)}
-                className={`h-10 sm:h-12 rounded-xl flex flex-col items-center justify-center relative transition-all ${
+                className={`h-10 sm:h-12 rounded-xl flex flex-col items-center justify-center relative transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-primary-btn text-white font-bold ring-2 ring-primary-text'
+                    ? 'bg-[#2563EB] text-white font-bold ring-2 ring-[#2563EB]/40 shadow-sm'
                     : isToday
-                    ? 'bg-muted text-warning font-bold border border-warning/40'
-                    : 'hover:bg-card-hover text-foreground'
+                    ? 'bg-[#EFF6FF] text-[#2563EB] font-bold border border-[#60A5FA] dark:bg-muted dark:text-warning dark:border-warning/40'
+                    : 'hover:bg-[#EFF6FF] dark:hover:bg-card-hover text-foreground'
                 }`}
               >
                 <span className="text-xs sm:text-sm font-mono">{day}</span>
@@ -160,15 +160,15 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
                         key={sIdx}
                         className={`w-1.5 h-1.5 rounded-full ${
                           s.status === 'Completed'
-                            ? 'bg-emerald-400'
+                            ? 'bg-emerald-500 dark:bg-emerald-400'
                             : s.urgency === 'Urgent'
-                            ? 'bg-red-400'
-                            : 'bg-warning'
+                            ? 'bg-red-500 dark:bg-red-400'
+                            : 'bg-amber-500 dark:bg-warning'
                         }`}
                       />
                     ))}
                     {daySummons.length > 3 && (
-                      <span className="text-[8px] text-primary-text leading-none">+</span>
+                      <span className="text-[8px] text-primary-text leading-none font-bold">+</span>
                     )}
                   </div>
                 )}
@@ -179,7 +179,7 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
       </div>
 
       {/* Selected Date Summary & Docket List */}
-      <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+      <div className="bg-card border border-border rounded-2xl p-5 space-y-4 shadow-sm">
         <div className="flex items-center justify-between border-b border-border pb-3">
           <div>
             <div className="flex items-center gap-2">
@@ -196,7 +196,7 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
           <button
             onClick={() => onAddSummonForDate(selectedDateStr)}
             id="add-summon-for-date-btn"
-            className="px-3 py-1.5 bg-primary-btn text-white font-bold text-xs rounded-lg flex items-center gap-1.5 btn-premium"
+            className="px-3 py-1.5 bg-primary-btn hover:bg-primary-hover text-white font-bold text-xs rounded-lg flex items-center gap-1.5 btn-premium shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" /> Add for this Date
           </button>
@@ -212,15 +212,15 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
               <div
                 key={s.id}
                 onClick={() => onSelectSummon(s)}
-                className="p-3.5 bg-background border border-border rounded-xl cursor-pointer space-y-2 card-premium"
+                className="p-3.5 bg-card border border-border rounded-xl cursor-pointer space-y-2 card-premium hover:border-[#60A5FA] hover:shadow-sm"
               >
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-bold text-foreground">{s.summonNumber}</span>
                   <span
                     className={`px-2 py-0.5 text-[10px] rounded-full uppercase font-bold ${
                       s.status === 'Completed'
-                        ? 'bg-emerald-950 text-emerald-300'
-                        : 'bg-warning-muted text-warning'
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-warning-muted dark:text-warning'
                     }`}
                   >
                     {s.status}

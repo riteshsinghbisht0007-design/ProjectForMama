@@ -336,6 +336,19 @@ export const scanSummonDocument = async (
       console.error(`[OCR Client] Server error HTTP ${res.status}:`, errJson);
 
       let errorMessage = errJson.error;
+      if (typeof errorMessage === 'string' && errorMessage.includes('{') && errorMessage.includes('}')) {
+        try {
+          const start = errorMessage.indexOf('{');
+          const end = errorMessage.lastIndexOf('}');
+          if (start !== -1 && end !== -1) {
+            const parsed = JSON.parse(errorMessage.slice(start, end + 1));
+            if (parsed?.error?.message) {
+              errorMessage = parsed.error.message;
+            }
+          }
+        } catch (_) {}
+      }
+
       if (!errorMessage) {
         if (res.status === 401 || res.status === 403) {
           errorMessage = 'Authentication issue: Gemini API key unauthorized or expired on server.';
@@ -346,7 +359,7 @@ export const scanSummonDocument = async (
         } else if (res.status === 429) {
           errorMessage = 'AI service rate limit reached. Please wait a moment and retry.';
         } else if (res.status === 503) {
-          errorMessage = errJson.error || 'AI OCR service is temporarily unavailable or GEMINI_API_KEY is missing.';
+          errorMessage = 'AI document extraction service is temporarily unavailable or experiencing high demand. Please retry in a few moments.';
         } else {
           errorMessage = `AI OCR server returned status ${res.status}. Please check document details manually.`;
         }
