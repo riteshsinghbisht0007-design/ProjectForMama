@@ -18,6 +18,7 @@ import {
   uploadString,
   uploadBytes,
   getDownloadURL,
+  deleteObject,
 } from 'firebase/storage';
 
 // Official project configuration for summonsviewer (Project # 978347682385)
@@ -65,4 +66,5 @@ export {
   uploadString,
   uploadBytes,
   getDownloadURL,
+  deleteObject,
 };

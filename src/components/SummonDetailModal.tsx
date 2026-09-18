@@ -18,6 +18,7 @@ import {
   Check,
   FileText,
   ExternalLink,
+  Image as ImageIcon,
   Loader2,
 } from 'lucide-react';
 import { Summon } from '../types';
@@ -25,6 +26,7 @@ import { useSummons } from '../context/SummonContext';
 import { useToast } from './Toast';
 import { generateFormattedForwardText, shareSummonNative } from '../utils/shareService';
 import { downloadSummonNoticePDF } from '../utils/pdfService';
+import { ImageCropperModal } from './ImageCropperModal';
 
 interface SummonDetailModalProps {
   summon: Summon | null;
@@ -56,12 +58,46 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
   const [editCourtAddress, setEditCourtAddress] = useState('');
   const [editOffense, setEditOffense] = useState('');
   const [editUrgency, setEditUrgency] = useState<'Standard' | 'High' | 'Urgent'>('Standard');
+  const [editRawFile, setEditRawFile] = useState<File | null>(null);
+  const [editAttachmentPreview, setEditAttachmentPreview] = useState<string | null>(null);
+  const [editFileName, setEditFileName] = useState<string>('');
+  const [removeImage, setRemoveImage] = useState<boolean>(false);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [cropFileName, setCropFileName] = useState<string>('');
+  const [cropMimeType, setCropMimeType] = useState<string>('image/jpeg');
+  const [isFullImageOpen, setIsFullImageOpen] = useState<boolean>(false);
+  
+  const handleEditImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCropFileName(file.name);
+    setCropMimeType(file.type || 'image/jpeg');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCropImageSrc(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
-  if (!summon) return null;
+  const handleEditCropComplete = (croppedBlob: Blob) => {
+    setCropImageSrc(null);
+    const file = new File([croppedBlob], cropFileName, { type: cropMimeType });
+    setEditRawFile(file);
+    setEditFileName(cropFileName);
+    setRemoveImage(false);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditAttachmentPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
   
   const hasUnsavedChanges = () => {
-    if (!isEditing) return false;
+    if (editRawFile !== null) return true;
+    if (removeImage) return true;
+    if (!isEditing || !summon) return false;
     if (editPersonName !== summon.personName) return true;
     if (editFatherName !== (summon.fatherName || '')) return true;
     if (editAddress !== summon.address) return true;
@@ -77,14 +113,12 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
   // Autosave Effect
   React.useEffect(() => {
-    if (!isEditing) return;
+    if (!isEditing || !summon) return;
     if (!hasUnsavedChanges()) return;
-
     setSaveStatus('saving');
-
     const timer = setTimeout(async () => {
       try {
-        await updateSummon(summon.id, {
+        let updates: any = {
           personName: editPersonName.trim(),
           fatherName: editFatherName.trim() || undefined,
           address: editAddress.trim(),
@@ -93,19 +127,31 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           courtAddress: editCourtAddress.trim(),
           offenseCharges: editOffense.trim(),
           urgency: editUrgency,
-        });
+        };
+        if (removeImage) updates.imageUrl = '';
+        
+        await updateSummon(summon.id, updates, editRawFile, editFileName);
+        
+        setEditRawFile(null);
+        setRemoveImage(false);
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000); // clear saved text after 2s
       } catch {
         setSaveStatus('error');
       }
     }, 1000); // 1s debounce
-
     return () => clearTimeout(timer);
   }, [
     editPersonName, editFatherName, editAddress, editHearingDate,
-    editCourtName, editCourtAddress, editOffense, editUrgency, isEditing, summon.id, updateSummon
+    editCourtName, editCourtAddress, editOffense, editUrgency, isEditing, summon?.id, updateSummon
   ]);
+
+  if (!summon) return null;
+
+  
+  
+
+  
 
   const handleClose = () => {
     if (hasUnsavedChanges()) {
@@ -128,12 +174,16 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
     setEditCourtAddress(summon.courtAddress);
     setEditOffense(summon.offenseCharges || '');
     setEditUrgency(summon.urgency);
+    setEditRawFile(null);
+    setEditAttachmentPreview(null);
+    setEditFileName('');
+    setRemoveImage(false);
     setIsEditing(true);
   };
 
   const handleSaveEdit = async () => {
     try {
-      await updateSummon(summon.id, {
+      let updates: any = {
         personName: editPersonName.trim(),
         fatherName: editFatherName.trim() || undefined,
         address: editAddress.trim(),
@@ -142,7 +192,12 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
         courtAddress: editCourtAddress.trim(),
         offenseCharges: editOffense.trim(),
         urgency: editUrgency,
-      });
+      };
+      if (removeImage) updates.imageUrl = '';
+      
+      await updateSummon(summon.id, updates, editRawFile, editFileName);
+      setEditRawFile(null);
+      setRemoveImage(false);
       setIsEditing(false);
       showToast('Summon docket updated successfully in database', 'success', 'Saved');
     } catch {
@@ -335,22 +390,87 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
           )}
 
           {/* DOCUMENT ATTACHMENTS (IMAGE OR PDF) */}
-          {summon.imageUrl && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono">
-                  Official Document / Warrant Scan
-                </span>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono">
+                Official Document / Warrant Scan
+              </span>
+              {!isEditing && summon.imageUrl && (
                 <span className="text-[11px] text-muted-foreground">
                   Preserved in encrypted cloud vault
                 </span>
+              )}
+            </div>
+            {isEditing ? (
+              <div className="border border-border border-dashed rounded-xl overflow-hidden bg-black/20 p-4 flex flex-col items-center justify-center space-y-3">
+                {(!removeImage && (editAttachmentPreview || summon.imageUrl)) ? (
+                  <>
+                    <img
+                      src={editAttachmentPreview || summon.imageUrl}
+                      alt="Summon document copy"
+                      className="max-h-48 object-contain rounded-lg border border-border-strong"
+                    />
+                    <div className="flex items-center gap-3">
+                      <label htmlFor="edit-replace-photo" className="px-3 py-1.5 rounded-lg bg-muted hover:bg-border text-xs cursor-pointer transition-colors">
+                        <input id="edit-replace-photo" type="file" accept="image/*" onChange={handleEditImageUpload} className="hidden" />
+                        Replace Photo
+                      </label>
+                      <button onClick={() => setRemoveImage(true)} className="px-3 py-1.5 rounded-lg text-red-400 hover:bg-red-950/30 text-xs transition-colors">
+                        Remove Photo
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="p-3 bg-muted rounded-full text-muted-foreground">
+                      <ImageIcon className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">No summons photo attached</span>
+                    <label htmlFor="edit-add-photo" className="px-3 py-1.5 rounded-lg bg-primary-btn hover:bg-primary-hover text-white text-xs cursor-pointer transition-colors mt-2">
+                      <input id="edit-add-photo" type="file" accept="image/*" capture="environment" onChange={handleEditImageUpload} className="hidden" />
+                      Add Photo
+                    </label>
+                  </>
+                )}
               </div>
-              <div className="border border-border rounded-xl overflow-hidden bg-black/40 p-2 flex justify-center">
-                <img
-                  src={summon.imageUrl}
-                  alt="Summon document copy"
-                  className="max-h-72 object-contain rounded-lg border border-border-strong"
-                />
+            ) : (
+              summon.imageUrl ? (
+                <div className="border border-border rounded-xl overflow-hidden bg-black/40 p-2 flex flex-col items-center">
+                  <img
+                    src={summon.imageUrl}
+                    alt="Summon document copy"
+                    className="max-h-72 object-contain rounded-lg border border-border-strong mb-2 cursor-pointer"
+                    onClick={() => setIsFullImageOpen(true)}
+                  />
+                  <button onClick={() => setIsFullImageOpen(true)} className="text-[11px] text-cyan-400 hover:underline mb-1">
+                    View Full Image
+                  </button>
+                </div>
+              ) : (
+                <div className="border border-border border-dashed rounded-xl overflow-hidden bg-black/20 p-6 flex flex-col items-center justify-center">
+                  <ImageIcon className="w-6 h-6 text-muted-foreground mb-2 opacity-50" />
+                  <span className="text-xs text-muted-foreground">No summons photo attached</span>
+                </div>
+              )
+            )}
+          </div>
+          
+      {cropImageSrc && (
+        <ImageCropperModal
+          isOpen={!!cropImageSrc}
+          onClose={() => setCropImageSrc(null)}
+          imageSrc={cropImageSrc}
+          onCropComplete={handleEditCropComplete}
+        />
+      )}
+          {/* Full Image Modal */}
+          {isFullImageOpen && summon?.imageUrl && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8 bg-black/90 backdrop-blur-sm" onClick={() => setIsFullImageOpen(false)}>
+              <div className="relative max-w-5xl w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setIsFullImageOpen(false)} className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black text-white rounded-full transition-colors z-10">
+                  <X className="w-6 h-6" />
+                </button>
+                <img src={summon.imageUrl} alt="Full Summons Photo" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
               </div>
             </div>
           )}

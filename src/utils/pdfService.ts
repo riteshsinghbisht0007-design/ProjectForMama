@@ -1,6 +1,33 @@
 import jsPDF from 'jspdf';
 import { Summon, WitnessPerson } from '../types';
 
+
+const fetchImageAndGetProps = async (url: string): Promise<{ dataUrl: string, format: string, width: number, height: number } | null> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(null); return; }
+      ctx.drawImage(img, 0, 0);
+      let format = 'JPEG';
+      let dataUrl = '';
+      try {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      } catch (e) {
+        resolve(null);
+        return;
+      }
+      resolve({ dataUrl, format, width: img.width, height: img.height });
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+};
+
 export interface GeneratePdfOptions {
   witness?: WitnessPerson | null;
   officerName?: string;
@@ -42,13 +69,13 @@ export const generateSummonNoticePDF = async (
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.text('DELHI POLICE • JUDICIAL SUMMONS WING', pageWidth / 2, 19, { align: 'center' });
+  doc.text('KOLKATA POLICE • JUDICIAL SUMMONS — DEMO', pageWidth / 2, 19, { align: 'center' });
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(173, 200, 245);
   doc.text(
-    `POLICE STATION: ${summon.policeStation.toUpperCase()} • DISTRICT: ${summon.district.toUpperCase()} • DELHI NCT`,
+    `POLICE STATION: ${summon.policeStation.toUpperCase()} • DISTRICT: ${summon.district.toUpperCase()} • WEST BENGAL`,
     pageWidth / 2,
     25,
     { align: 'center' }
@@ -56,7 +83,7 @@ export const generateSummonNoticePDF = async (
 
   doc.setFontSize(7.5);
   doc.setTextColor(255, 183, 125);
-  doc.text('ISSUED UNDER SECTION 61 / 62 Cr.P.C. / BNSS 2023', pageWidth / 2, 30, { align: 'center' });
+  doc.text('SAMPLE / DEMO — NOT A LEGAL DOCUMENT', pageWidth / 2, 30, { align: 'center' });
 
   cursorY = 40;
 
@@ -82,6 +109,13 @@ export const generateSummonNoticePDF = async (
   }
 
   cursorY += 8;
+
+  
+  // Watermark
+  doc.setFontSize(40);
+  doc.setTextColor(240, 200, 200); // Light red/grey
+  doc.text('SAMPLE / DEMO — NOT A LEGAL DOCUMENT', pageWidth/2, pageHeight/2 + 20, { align: 'center', angle: 45 });
+  doc.setTextColor(15, 23, 42); // reset
 
   // 4. Case Metadata Box (Two-column layout)
   doc.setFillColor(248, 250, 252);
@@ -293,7 +327,7 @@ export const generateSummonNoticePDF = async (
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
   doc.setTextColor(100, 116, 139);
-  const offText = options?.officerName ? `${options.officerName} (${options.badgeNumber || 'Delhi Police'})` : summon.policeStation;
+  const offText = options?.officerName ? `${options.officerName} (${options.badgeNumber || 'Kolkata Police'})` : summon.policeStation;
   doc.text(offText, margin + 33, signY + 8, { align: 'center' });
   doc.text('Left Thumb Impression / Sign', pageWidth - margin - 39, signY + 8, { align: 'center' });
 
@@ -303,6 +337,62 @@ export const generateSummonNoticePDF = async (
   doc.setTextColor(148, 163, 184);
   const genStamp = `DIGITAL VERIFICATION REF: DP-SM-${summon.id.toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
   doc.text(genStamp, pageWidth / 2, pageHeight - 12, { align: 'center' });
+
+  
+  // 11. Scanned Image Section - New Page
+  doc.addPage();
+  doc.setDrawColor(30, 41, 59); // dark slate
+  doc.setLineWidth(0.8);
+  doc.rect(8, 8, pageWidth - 16, pageHeight - 16);
+  doc.setDrawColor(71, 85, 105);
+  doc.setLineWidth(0.3);
+  doc.rect(10, 10, pageWidth - 20, pageHeight - 20);
+
+  doc.setFillColor(30, 58, 95);
+  doc.rect(margin, margin, contentWidth, 7, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text('SCANNED IMAGE — DEMO', margin + 4, margin + 4.8);
+
+  // Watermark on second page
+  doc.setFontSize(40);
+  doc.setTextColor(240, 200, 200);
+  doc.text('SAMPLE / DEMO — NOT A LEGAL DOCUMENT', pageWidth/2, pageHeight/2 + 20, { align: 'center', angle: 45 });
+  doc.setTextColor(15, 23, 42); // reset
+
+  if (summon.imageUrl) {
+    try {
+      const imgProps = await fetchImageAndGetProps(summon.imageUrl);
+      if (imgProps) {
+        const maxW = contentWidth;
+        const maxH = pageHeight - margin - 30; // margin top + rect height + some padding
+        let w = imgProps.width;
+        let h = imgProps.height;
+        if (w > maxW) {
+          h = h * (maxW / w);
+          w = maxW;
+        }
+        if (h > maxH) {
+          w = w * (maxH / h);
+          h = maxH;
+        }
+        doc.addImage(imgProps.dataUrl, imgProps.format, margin + (contentWidth - w) / 2, margin + 15, w, h);
+      } else {
+        doc.setFontSize(10);
+        doc.setTextColor(100, 116, 139);
+        doc.text('Failed to load attached scanned image.', pageWidth/2, margin + 25, { align: 'center' });
+      }
+    } catch (e) {
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Failed to load attached scanned image.', pageWidth/2, margin + 25, { align: 'center' });
+    }
+  } else {
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139);
+    doc.text('No scanned image attached.', pageWidth/2, margin + 25, { align: 'center' });
+  }
 
   // Output preparation
   const cleanSummonNo = (summon.summonNumber || 'WARRANT').replace(/[^a-zA-Z0-9]/g, '_');

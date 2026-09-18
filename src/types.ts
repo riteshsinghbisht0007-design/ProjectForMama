@@ -73,6 +73,7 @@ export interface OfficerUser {
   rank: string;
   district: string;
   authProvider: 'google' | 'facebook' | 'password';
+  upcomingAlertDays?: number;
 }
 
 export interface SummonFilter {
@@ -87,4 +88,19 @@ export interface MetricSummary {
   pending: number;
   upcoming: number;
   completed: number;
+}
+
+
+export type NotificationType = 'HEARING_TODAY' | 'HEARING_TOMORROW' | 'HEARING_UPCOMING' | 'HEARING_OVERDUE';
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  summonsId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  hearingDate: string;
+  isRead: boolean;
+  createdAt: string;
 }

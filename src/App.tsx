@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   Plus,
+  Loader2,
   Search,
   Filter,
   Calendar,
@@ -15,6 +16,7 @@ import {
 import { motion } from 'motion/react';
 import { useAuth } from './context/AuthContext';
 import { useSummons } from './context/SummonContext';
+import { useNotifications } from './context/NotificationContext';
 import { Summon, SummonStatus } from './types';
 import { TopNavBar } from './components/TopNavBar';
 import { MetricCardsGrid } from './components/MetricCardsGrid';
@@ -24,14 +26,15 @@ import { SummonDetailModal } from './components/SummonDetailModal';
 import { SplitScreenshotModal } from './components/SplitScreenshotModal';
 import { HearingCalendarView } from './components/HearingCalendarView';
 import { OfficerProfileModal } from './components/OfficerProfileModal';
-import { UrgentAlertsModal } from './components/UrgentAlertsModal';
+import { NotificationPanelModal } from './components/NotificationPanelModal';
+import { PriorityAlertsDashboardWidget } from './components/PriorityAlertsDashboardWidget';
 import { AuthScreen } from './components/AuthScreen';
 import { WelcomeAnimation } from './components/WelcomeAnimation';
 import { WitnessDirectoryModal } from './components/WitnessDirectoryModal';
 
 export function App() {
-  const { currentUser } = useAuth();
-  const { summons, metrics } = useSummons();
+  const { currentUser, isLoading: authLoading } = useAuth();
+  const { summons, metrics, isLoading: summonsLoading } = useSummons();
 
   // Navigation tab: 'docket' or 'calendar'
   const [activeTab, setActiveTab] = useState<'docket' | 'calendar'>('docket');
@@ -97,20 +100,32 @@ export function App() {
       });
   }, [summons, statusFilter, searchQuery, sortBy, sortOrder]);
 
-  // Urgent hearings count
-  const today = new Date().toISOString().split('T')[0];
-  const urgentCount = summons.filter((s) => {
-    if (s.status === 'Completed' || !s.hearingDate) return false;
-    const diff = Math.ceil(
-      (new Date(s.hearingDate).getTime() - new Date(today).getTime()) / (1000 * 3600 * 24)
-    );
-    return diff <= 2;
-  }).length;
+  const { unreadCount } = useNotifications();
 
   // If not logged in, render the AuthScreen
+  
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+        <p className="text-muted-foreground text-sm font-medium tracking-wide">Restoring your data...</p>
+      </div>
+    );
+  }
+
   if (!currentUser) {
     return <AuthScreen />;
   }
+
+  if (summonsLoading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+        <p className="text-muted-foreground text-sm font-medium tracking-wide">Loading your summons...</p>
+      </div>
+    );
+  }
+
 
   const handleOpenAddForDate = (dateStr: string) => {
     setDefaultHearingDate(dateStr);
@@ -182,13 +197,13 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {urgentCount > 0 && (
+            {unreadCount > 0 && (
               <button
                 onClick={() => setIsAlertsOpen(true)}
                 className="px-3.5 py-2.5 rounded-xl bg-red-950/70 border border-red-800 text-red-300 hover:bg-red-900/80 text-xs font-bold flex items-center gap-2 transition-colors animate-pulse"
               >
                 <AlertTriangle className="w-4 h-4" />
-                <span>{urgentCount} Court Hearing Alert(s)</span>
+                <span>{unreadCount} Court Hearing Alert(s)</span>
               </button>
             )}
 
@@ -213,7 +228,14 @@ export function App() {
             setStatusFilter(f);
             if (activeTab === 'calendar') setActiveTab('docket');
           }}
-        /></motion.div>
+        />
+          
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 mt-6">
+            <PriorityAlertsDashboardWidget onSelectSummon={(sid) => {
+              const s = summons.find(x => x.id === sid);
+              if (s) setSelectedSummon(s);
+            }} />
+          </div></motion.div>
 
         {/* Primary View Switcher Tabs */}
         <motion.div variants={itemVariants} className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
@@ -391,11 +413,13 @@ export function App() {
       <OfficerProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
 
       {/* 5. Urgent Hearing Alerts Drawer / Modal */}
-      <UrgentAlertsModal
+      <NotificationPanelModal
         isOpen={isAlertsOpen}
         onClose={() => setIsAlertsOpen(false)}
-        summons={summons}
-        onSelectSummon={(s) => setSelectedSummon(s)}
+        onSelectSummon={(sid) => {
+          const s = summons.find(x => x.id === sid);
+          if (s) setSelectedSummon(s);
+        }}
       />
                 </motion.div>
       )}

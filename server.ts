@@ -74,60 +74,40 @@ async function startServer() {
   console.info(`[Server] Starting SummonMitra backend in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode...`);
 
   // --- MongoDB Setup ---
+  
   let mongoClient: MongoClient | null = null;
   let db: any = null;
 
-  console.warn('[AI Studio] Database not connected — using mock');
-  const mockStore: Record<string, any[]> = {};
-  db = {
-    databaseName: 'mockdb',
-    command: async () => ({ ok: 1 }),
-    collection: (name: string) => {
-      mockStore[name] = mockStore[name] || [];
-      const col = mockStore[name];
-      return {
-        createIndex: async () => {},
-        findOne: async (q: any) => col.find((doc: any) => {
-          if (q._id) return doc._id.toString() === q._id.toString();
-          if (q.email) return doc.email === q.email;
-          if (q.providerId) return doc.providerId === q.providerId;
-          if (q.$or) return q.$or.some((orQ: any) => (orQ.providerId && orQ.providerId === doc.providerId) || (orQ.email && orQ.email === doc.email));
-          return false;
-        }),
-        find: (q: any) => ({
-          toArray: async () => col.filter((doc: any) => {
-            if (q.userId) return doc.userId === q.userId;
-            return true;
-          })
-        }),
-        insertOne: async (d: any) => {
-          const _id = d._id || new ObjectId();
-          const newDoc = { ...d, _id };
-          col.push(newDoc);
-          return { insertedId: _id };
-        },
-        updateOne: async (q: any, update: any) => {
-          const doc = await db.collection(name).findOne(q);
-          if (doc && update.$set) {
-            Object.assign(doc, update.$set);
-          }
-        },
-        findOneAndUpdate: async (q: any, update: any) => {
-          const doc = await db.collection(name).findOne(q);
-          if (doc && update.$set) {
-            Object.assign(doc, update.$set);
-            return doc;
-          }
-          return null;
-        },
-        deleteOne: async (q: any) => {
-          const idx = col.findIndex((doc: any) => doc._id.toString() === q._id?.toString());
-          if (idx > -1) col.splice(idx, 1);
+  if (process.env.MONGODB_URI) {
+    try {
+      console.info('[Server] Connecting to MongoDB...');
+      mongoClient = new MongoClient(process.env.MONGODB_URI, {
+        serverApi: {
+          version: ServerApiVersion.v1,
+          strict: true,
+          deprecationErrors: true,
         }
-      };
+      });
+      await mongoClient.connect();
+      db = mongoClient.db(process.env.MONGODB_DB_NAME || 'summons_app');
+      console.info('[Server] Successfully connected to MongoDB');
+
+      // Ensure indexes for efficient querying
+      await db.collection('summons').createIndex({ userId: 1 });
+      await db.collection('summons').createIndex({ userId: 1, createdAt: -1 });
+      await db.collection('summons').createIndex({ userId: 1, updatedAt: -1 });
+      await db.collection('witnesses').createIndex({ userId: 1 });
+      await db.collection('users').createIndex({ email: 1 });
+      await db.collection('users').createIndex({ providerId: 1 });
+      await db.collection('notifications').createIndex({ userId: 1 });
+      await db.collection('notifications').createIndex({ uniqueKey: 1 }, { unique: true });
+    } catch (err) {
+      console.error('[Server] Failed to connect to MongoDB:', err);
     }
-  };
-  mongoClient = {} as any;
+  } else {
+    console.warn('[Server] MONGODB_URI not found. Please provide a real database connection string.');
+  }
+
   // ---------------------
 
   // Robust CORS configuration for preview iframe, localhost, and public shared domains
@@ -146,6 +126,7 @@ async function startServer() {
   app.use(cookieParser());
 
   // 1. General Health Check
+  
   app.get('/api/health', (_req, res) => {
     res.status(200).json({
       status: 'ok',
@@ -402,7 +383,7 @@ async function startServer() {
       
       updates.updatedAt = new Date();
 
-      const filter = req.user._id ? { _id: new ObjectId(req.user._id) } : { providerId: req.user.uid };
+      const filter = (req.user._id && ObjectId.isValid(req.user._id)) ? { _id: new ObjectId(req.user._id) } : { providerId: req.user.uid };
       
       const result = await db.collection('users').findOneAndUpdate(
         filter,
@@ -425,7 +406,13 @@ async function startServer() {
   app.get('/api/auth/me', requireAuth, async (req: any, res: any) => {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const user = await db.collection('users').findOne({ _id: new ObjectId(req.user._id) });
+      let user = null;
+      if (req.user._id && ObjectId.isValid(req.user._id)) {
+        user = await db.collection('users').findOne({ _id: new ObjectId(req.user._id) });
+      } else if (req.user.uid) {
+        user = await db.collection('users').findOne({ providerId: req.user.uid });
+      }
+      
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -489,6 +476,7 @@ async function startServer() {
     try {
       const { id } = req.params;
       await db.collection('summons').deleteOne({ _id: id, userId: req.user.uid });
+      await db.collection('notifications').deleteMany({ summonsId: id, userId: req.user.uid });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -710,6 +698,127 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
     }
   });
 
+
+  // --- Notifications Endpoints ---
+  app.get('/api/notifications', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const { today, upcomingDays = 7 } = req.query;
+      if (!today) return res.status(400).json({ error: 'Missing today parameter (YYYY-MM-DD)' });
+      
+      const userId = req.user.uid;
+      
+      const summons = await db.collection('summons').find({ userId, status: { $ne: 'Completed' } }).toArray();
+      
+      const todayDate = new Date(today);
+      const bulkOps = [];
+      
+      for (const summon of summons) {
+        if (!summon.hearingDate) continue;
+        const hearing = new Date(summon.hearingDate);
+        const diffTime = hearing.getTime() - todayDate.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        let type = null;
+        let title = '';
+        let message = '';
+        
+        if (diffDays < 0) {
+          type = 'HEARING_OVERDUE';
+          title = 'Overdue Hearing';
+          message = `Hearing date for ${summon.personName} (${summon.summonNumber || summon.caseNumber}) has passed.`;
+        } else if (diffDays === 0) {
+          type = 'HEARING_TODAY';
+          title = 'Hearing Today';
+          message = `Hearing scheduled for today: ${summon.personName} (${summon.summonNumber || summon.caseNumber}).`;
+        } else if (diffDays === 1) {
+          type = 'HEARING_TOMORROW';
+          title = 'Hearing Tomorrow';
+          message = `Hearing scheduled for tomorrow: ${summon.personName} (${summon.summonNumber || summon.caseNumber}).`;
+        } else if (diffDays > 1 && diffDays <= parseInt(upcomingDays)) {
+          type = 'HEARING_UPCOMING';
+          title = 'Upcoming Hearing';
+          message = `Hearing in ${diffDays} days for ${summon.personName} (${summon.summonNumber || summon.caseNumber}).`;
+        }
+        
+        if (type) {
+          const uniqueKey = `${userId}_${summon._id}_${type}_${summon.hearingDate}`;
+          bulkOps.push({
+            updateOne: {
+              filter: { uniqueKey },
+              update: {
+                $setOnInsert: {
+                  userId,
+                  summonsId: summon._id.toString(),
+                  type,
+                  title,
+                  message,
+                  hearingDate: summon.hearingDate,
+                  isRead: false,
+                  createdAt: new Date().toISOString()
+                }
+              },
+              upsert: true
+            }
+          });
+        }
+      }
+      
+      if (bulkOps.length > 0) {
+        await db.collection('notifications').bulkWrite(bulkOps, { ordered: false });
+      }
+      
+      const notifications = await db.collection('notifications')
+        .find({ userId })
+        .sort({ createdAt: -1 })
+        .toArray();
+        
+      res.json(notifications.map((n: any) => ({ ...n, id: n._id.toString() })));
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/notifications/:id/read', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const { id } = req.params;
+      const { ObjectId } = require('mongodb');
+      await db.collection('notifications').updateOne(
+        { _id: new ObjectId(id), userId: req.user.uid },
+        { $set: { isRead: true } }
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  app.put('/api/notifications/read-all', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      await db.collection('notifications').updateMany(
+        { userId: req.user.uid, isRead: false },
+        { $set: { isRead: true } }
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/notifications/cleanup/:summonsId', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const { summonsId } = req.params;
+      await db.collection('notifications').deleteMany({ userId: req.user.uid, summonsId });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Serve Frontend Assets: Vite middleware in Development, static dist/ in Production
   if (!isProduction) {
     const vite = await createViteServer({
@@ -727,6 +836,47 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
     });
     console.info(`[Server] Serving production static files from ${distPath}`);
   }
+
+  // --- Notifications Endpoints ---
+
+
+  app.put('/api/notifications/:id/read', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const { id } = req.params;
+      await db.collection('notifications').updateOne(
+        { _id: new ObjectId(id), userId: req.user.uid },
+        { $set: { isRead: true } }
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  app.put('/api/notifications/read-all', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      await db.collection('notifications').updateMany(
+        { userId: req.user.uid, isRead: false },
+        { $set: { isRead: true } }
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/notifications/cleanup/:summonsId', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const { summonsId } = req.params;
+      await db.collection('notifications').deleteMany({ userId: req.user.uid, summonsId });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.info(`[Server] Production-ready server running on http://0.0.0.0:${PORT}`);

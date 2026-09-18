@@ -33,6 +33,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const [policeStation, setPoliceStation] = useState(currentUser?.policeStation || '');
   const [district, setDistrict] = useState(currentUser?.district || '');
   const [rank, setRank] = useState(currentUser?.rank || '');
+  const [upcomingAlertDays, setUpcomingAlertDays] = useState(currentUser?.upcomingAlertDays || 7);
   const [photoURL, setPhotoURL] = useState(currentUser?.photoURL || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -46,6 +47,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
       setPoliceStation(currentUser.policeStation || '');
       setDistrict(currentUser.district || '');
       setRank(currentUser.rank || '');
+      setUpcomingAlertDays(currentUser.upcomingAlertDays || 7);
       setPhotoURL(currentUser.photoURL || '');
     }
   }, [currentUser]);
@@ -63,6 +65,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
         district,
         rank,
         photoURL,
+        upcomingAlertDays,
       });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);

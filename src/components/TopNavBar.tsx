@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Bell, User, Clock, CheckCircle2, Users, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSummons } from '../context/SummonContext';
+import { useNotifications } from '../context/NotificationContext';
 
 interface TopNavBarProps {
   onOpenProfile: () => void;
@@ -55,12 +56,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
   // Upcoming within 3 days
   const today = new Date().toISOString().split('T')[0];
-  const upcomingCount = summons.filter((s) => {
-    if (s.status === 'Completed') return false;
-    const diff = new Date(s.hearingDate).getTime() - new Date(today).getTime();
-    const days = diff / (1000 * 3600 * 24);
-    return days >= 0 && days <= 3;
-  }).length;
+  const { unreadCount } = useNotifications();
 
   return (
     <header className="sticky top-0 z-30 bg-background/80 border-b border-border backdrop-blur-xl shadow-premium">
@@ -137,9 +133,9 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             className="relative p-2 rounded-lg bg-card border border-border text-foreground btn-premium cursor-pointer"
           >
             <Bell className="w-4 h-4" />
-            {upcomingCount > 0 && (
+            {unreadCount > 0 && (
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-foreground text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
-                {upcomingCount}
+                {unreadCount}
               </span>
             )}
           </button>

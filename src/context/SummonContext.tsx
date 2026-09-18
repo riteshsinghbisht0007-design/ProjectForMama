@@ -11,7 +11,7 @@ interface SummonContextType {
     summonData: Omit<Summon, 'id' | 'userId' | 'createdAt' | 'updatedAt'>,
     attachmentFile?: File | Blob | null
   ) => Promise<Summon>;
-  updateSummon: (id: string, updates: Partial<Summon>) => Promise<void>;
+  updateSummon: (id: string, updates: Partial<Summon>, attachmentFile?: File | Blob | null, fileName?: string) => Promise<void>;
   deleteSummon: (id: string) => Promise<void>;
   markAsServed: (id: string, notes?: string) => Promise<void>;
   toggleReminder: (id: string) => Promise<void>;
@@ -199,10 +199,20 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const updateSummon = async (id: string, updates: Partial<Summon>) => {
+  const updateSummon = async (id: string, updates: Partial<Summon>, attachmentFile?: File | Blob | null, fileName?: string) => {
     if (!currentUser) return;
     const now = new Date().toISOString();
-    const updatedRecord = { ...updates, updatedAt: now };
+    let finalImageUrl = updates.imageUrl;
+    let finalPdfUrl = updates.pdfUrl;
+    if (attachmentFile && fileName) {
+      const dataUrl = await uploadAttachment(id, attachmentFile as File, fileName);
+      if (fileName.toLowerCase().endsWith('.pdf')) {
+        finalPdfUrl = dataUrl;
+      } else {
+        finalImageUrl = dataUrl;
+      }
+    }
+    const updatedRecord = { ...updates, updatedAt: now, ...(finalImageUrl !== undefined && { imageUrl: finalImageUrl }), ...(finalPdfUrl !== undefined && { pdfUrl: finalPdfUrl }) };
 
     try {
       const response = await fetch(`/api/summons/${id}`, {
@@ -231,6 +241,8 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const deleteSummon = async (id: string) => {
     if (!currentUser) return;
     try {
+      const summonToDelete = summons.find(s => s.id === id);
+      
       const response = await fetch(`/api/summons/${id}`, {
         method: 'DELETE',
         credentials: 'include',
@@ -238,6 +250,22 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       
       if (!response.ok) {
         throw new Error('Failed to delete summon from database');
+      }
+
+      if (summonToDelete) {
+        try {
+          const { storage, deleteObject, storageRef, isFirebaseConfigured } = await import('../services/firebase');
+          if (isFirebaseConfigured && storage) {
+            if (summonToDelete.imageUrl && summonToDelete.imageUrl.includes('firebasestorage.googleapis.com')) {
+               const fileRef = storageRef(storage, summonToDelete.imageUrl);
+               await deleteObject(fileRef).catch(() => {});
+            }
+            if (summonToDelete.pdfUrl && summonToDelete.pdfUrl.includes('firebasestorage.googleapis.com')) {
+               const fileRef = storageRef(storage, summonToDelete.pdfUrl);
+               await deleteObject(fileRef).catch(() => {});
+            }
+          }
+        } catch (e) {}
       }
 
       setSummons((prev) => {
