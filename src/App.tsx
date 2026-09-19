@@ -76,9 +76,11 @@ export function App() {
     registerPushServiceWorker().catch(() => {});
   }, []);
 
-  // 3. Resolve deep-linked summon after authentication
+  // 3. Resolve deep-linked summon after authentication (only once on initial mount/auth)
+  const hasResolvedDeepLinkRef = React.useRef(false);
+
   React.useEffect(() => {
-    if (!currentUser || summonsLoading) return;
+    if (!currentUser || summonsLoading || hasResolvedDeepLinkRef.current) return;
 
     const pendingId = sessionStorage.getItem('summonsmitra_pending_summon_id');
     const pathMatch = window.location.pathname.match(/^\/summons\/([^/?#]+)/);
@@ -86,10 +88,11 @@ export function App() {
     const targetId = pendingId || (pathMatch ? pathMatch[1] : queryParamId);
 
     if (targetId && !selectedSummon) {
+      hasResolvedDeepLinkRef.current = true;
+      sessionStorage.removeItem('summonsmitra_pending_summon_id');
       const match = summons.find((s) => s.id === targetId || (s as any)._id === targetId);
       if (match) {
         setSelectedSummon(match);
-        sessionStorage.removeItem('summonsmitra_pending_summon_id');
         setPostLoginStage('dashboard');
       } else {
         (async () => {
@@ -108,7 +111,6 @@ export function App() {
             if (res.ok) {
               const data = await res.json();
               setSelectedSummon(data);
-              sessionStorage.removeItem('summonsmitra_pending_summon_id');
               setPostLoginStage('dashboard');
             }
           } catch (err) {
@@ -116,8 +118,10 @@ export function App() {
           }
         })();
       }
+    } else if (!targetId) {
+      hasResolvedDeepLinkRef.current = true;
     }
-  }, [currentUser, summonsLoading, summons, selectedSummon]);
+  }, [currentUser, summonsLoading, summons]);
 
   // 4. Synchronize URL state when summon modal is opened or closed
   React.useEffect(() => {
@@ -132,6 +136,13 @@ export function App() {
       }
     }
   }, [selectedSummon]);
+
+  const handleCloseSummonModal = () => {
+    if (window.location.pathname.startsWith('/summons/')) {
+      window.history.replaceState(null, '', '/');
+    }
+    setSelectedSummon(null);
+  };
 
   // 5. Listen for service worker notification click events when browser window is already open
   React.useEffect(() => {
@@ -289,11 +300,12 @@ export function App() {
 
       {/* Top Police Navigation Bar */}
       <motion.div variants={itemVariants} className="w-full relative z-30">
-          <TopNavBar
-        onOpenProfile={() => setIsProfileOpen(true)}
-        onOpenAlerts={() => setIsAlertsOpen(true)}
-          />
-        </motion.div>
+        <TopNavBar
+          onOpenProfile={() => setIsProfileOpen(true)}
+          onOpenAlerts={() => setIsAlertsOpen(true)}
+          onOpenWitnessDirectory={() => setIsWitnessDirOpen(true)}
+        />
+      </motion.div>
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
@@ -320,8 +332,9 @@ export function App() {
           <div className="flex items-center gap-3">
             {unreadCount > 0 && (
               <button
+                type="button"
                 onClick={() => setIsAlertsOpen(true)}
-                className="px-3.5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 dark:bg-red-950/70 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/80 text-xs font-bold flex items-center gap-2 transition-colors animate-pulse"
+                className="px-3.5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 dark:bg-red-950/70 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/80 text-xs font-bold flex items-center gap-2 transition-colors animate-pulse cursor-pointer"
               >
                 <AlertTriangle className="w-4 h-4" />
                 <span>{unreadCount} Court Hearing Alert(s)</span>
@@ -329,6 +342,18 @@ export function App() {
             )}
 
             <button
+              type="button"
+              onClick={() => setIsWitnessDirOpen(true)}
+              id="btn-witness-directory-header"
+              title="Open Registered Witnesses and Contacts Directory"
+              className="px-4 py-2.5 rounded-xl border border-border bg-card hover:bg-card-hover text-foreground font-bold text-xs flex items-center gap-2 btn-premium shadow-sm cursor-pointer"
+            >
+              <Users className="w-4 h-4 text-primary-text" />
+              <span>Witness Directory</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 setDefaultHearingDate(undefined);
                 setIsAddModalOpen(true);
@@ -515,9 +540,9 @@ export function App() {
       {/* 2. Summon Detail Modal (Inspect, Edit, Mark Served, Forward) */}
       <SummonDetailModal
         summon={selectedSummon}
-        onClose={() => setSelectedSummon(null)}
+        onClose={handleCloseSummonModal}
         onOpenSplitScreenshot={(s) => {
-          setSelectedSummon(null);
+          handleCloseSummonModal();
           setSplitSummon(s);
         }}
       />
@@ -536,6 +561,12 @@ export function App() {
           const s = summons.find(x => x.id === sid);
           if (s) setSelectedSummon(s);
         }}
+      />
+
+      {/* 6. Witness & People Police Directory Modal */}
+      <WitnessDirectoryModal
+        isOpen={isWitnessDirOpen}
+        onClose={() => setIsWitnessDirOpen(false)}
       />
                 </motion.div>
       )}

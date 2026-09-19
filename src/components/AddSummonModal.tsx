@@ -564,10 +564,35 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     }
   };
 
+  const handleModalClose = React.useCallback(() => {
+    stopCamera();
+    stopQrCamera();
+    onClose();
+  }, [onClose]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleModalClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, handleModalClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+    <div
+      id="add-summon-modal-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleModalClose();
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
+    >
       <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-6 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Modal Header & Step Indicator */}
         <div className="bg-background-alt border-b border-border px-5 sm:px-6 py-4 sticky top-0 z-20 space-y-3">
@@ -587,11 +612,10 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
             </div>
 
             <button
-              onClick={() => {
-                stopCamera();
-                onClose();
-              }}
+              type="button"
+              onClick={handleModalClose}
               id="close-add-modal-btn"
+              aria-label="Close summon registration"
               className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />

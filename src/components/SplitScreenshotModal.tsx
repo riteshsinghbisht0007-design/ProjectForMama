@@ -51,6 +51,17 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
     };
   }, [summon]);
 
+  // Keyboard Escape listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   if (!summon) return null;
 
   const handleDownload = () => {
@@ -100,7 +111,15 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+    <div
+      id="split-screenshot-modal-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div className="bg-background border border-border rounded-2xl w-full max-w-4xl my-8 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
@@ -116,9 +135,12 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             id="close-split-modal-btn"
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            aria-label="Close split copy view"
+            title="Close (Esc)"
+            className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted active:scale-95 transition-all cursor-pointer min-w-[40px] min-h-[40px] flex items-center justify-center border border-transparent hover:border-border"
           >
             <X className="w-5 h-5" />
           </button>
@@ -170,8 +192,18 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
 
         {/* Action Buttons */}
         <div className="bg-background-alt border-t border-border px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground">
-            Summon Ref: <span className="font-mono text-foreground">{summon.summonNumber}</span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              id="footer-close-split-modal-btn"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl border border-border bg-card hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm min-h-[38px]"
+            >
+              <X className="w-4 h-4" /> Close
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Ref: <span className="font-mono text-foreground">{summon.summonNumber}</span>
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

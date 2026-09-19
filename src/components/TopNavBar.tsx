@@ -106,7 +106,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           
           {/* Theme Toggle */}
           <button
+            type="button"
             onClick={toggleTheme}
+            id="theme-toggle-btn"
+            aria-label="Toggle light and dark theme"
             title="Toggle theme"
             className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
           >
@@ -116,8 +119,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           {/* Witness & Person Directory */}
           {onOpenWitnessDirectory && (
             <button
+              type="button"
               onClick={onOpenWitnessDirectory}
               id="witness-directory-btn"
+              aria-label="Open Witness and People Directory"
               title="Witness & People Directory"
               className="p-2 rounded-lg bg-card border border-border text-primary-text hover:text-primary-hover hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
             >
@@ -127,8 +132,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
           {/* Urgent Alerts Bell */}
           <button
+            type="button"
             onClick={onOpenAlerts}
             id="alerts-bell-btn"
+            aria-label="Judicial hearing alerts"
             title="Judicial hearing alerts"
             className="relative p-2 rounded-lg bg-card border border-border text-foreground hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
           >
@@ -142,8 +149,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
           {/* Profile Avatar Button */}
           <button
+            type="button"
             onClick={onOpenProfile}
             id="profile-nav-btn"
+            aria-label="Officer profile and settings"
             title="Officer profile & settings"
             className="flex items-center gap-2 p-1.5 rounded-lg bg-card border border-border hover:border-border-strong btn-premium cursor-pointer"
           >

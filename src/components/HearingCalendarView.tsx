@@ -92,22 +92,28 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
 
           <div className="flex items-center gap-1.5">
             <button
+              type="button"
               onClick={prevMonth}
               id="prev-month-btn"
-              className="p-1.5 rounded-lg border border-border text-foreground btn-premium"
+              aria-label="Previous month"
+              className="p-1.5 rounded-lg border border-border text-foreground btn-premium cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={() => setCurrentDate(new Date())}
-              className="px-2.5 py-1 text-xs rounded-lg border border-border text-primary-text btn-premium"
+              id="today-month-btn"
+              className="px-2.5 py-1 text-xs rounded-lg border border-border text-primary-text btn-premium cursor-pointer"
             >
               Today
             </button>
             <button
+              type="button"
               onClick={nextMonth}
               id="next-month-btn"
-              className="p-1.5 rounded-lg border border-border text-foreground btn-premium"
+              aria-label="Next month"
+              className="p-1.5 rounded-lg border border-border text-foreground btn-premium cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -142,6 +148,7 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
 
             return (
               <button
+                type="button"
                 key={dayStr}
                 onClick={() => setSelectedDateStr(dayStr)}
                 className={`h-10 sm:h-12 rounded-xl flex flex-col items-center justify-center relative transition-all cursor-pointer ${
@@ -194,9 +201,10 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={() => onAddSummonForDate(selectedDateStr)}
             id="add-summon-for-date-btn"
-            className="px-3 py-1.5 bg-primary-btn hover:bg-primary-hover text-white font-bold text-xs rounded-lg flex items-center gap-1.5 btn-premium shadow-sm"
+            className="px-3 py-1.5 bg-primary-btn hover:bg-primary-hover text-white font-bold text-xs rounded-lg flex items-center gap-1.5 btn-premium shadow-sm cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" /> Add for this Date
           </button>
@@ -211,8 +219,16 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
             {selectedDateSummons.map((s) => (
               <div
                 key={s.id}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectSummon(s);
+                  }
+                }}
                 onClick={() => onSelectSummon(s)}
-                className="p-3.5 bg-card border border-border rounded-xl cursor-pointer space-y-2 card-premium hover:border-[#60A5FA] hover:shadow-sm"
+                className="p-3.5 bg-card border border-border rounded-xl cursor-pointer space-y-2 card-premium hover:border-[#60A5FA] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-btn"
               >
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-bold text-foreground">{s.summonNumber}</span>

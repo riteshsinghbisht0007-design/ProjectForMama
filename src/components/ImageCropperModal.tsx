@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ReactCrop, { centerCrop, makeAspectCrop, Crop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { motion, AnimatePresence } from 'motion/react';
@@ -110,6 +110,17 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -118,6 +129,11 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            onClose();
+          }
+        }}
         className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-background/95 backdrop-blur-md p-4 sm:p-6"
       >
         <div className="w-full max-w-4xl bg-card border border-border rounded-2xl shadow-2xl flex flex-col max-h-full overflow-hidden">
@@ -128,8 +144,10 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
               Crop Image
             </h2>
             <button
+              type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              aria-label="Close cropper"
+              className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -174,6 +192,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
                 <ZoomIn className="w-5 h-5" />
               </button>
               <button 
+                type="button"
                 onClick={() => {
                   setScale(1);
                   setCrop(undefined);
@@ -181,7 +200,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
                     setCrop(centerAspectCrop(imgRef.current.width, imgRef.current.height, aspectRatio));
                   }
                 }}
-                className="p-2 bg-muted rounded-lg text-foreground hover:bg-border ml-2 flex items-center gap-1 text-xs font-medium"
+                className="p-2 bg-muted rounded-lg text-foreground hover:bg-border ml-2 flex items-center gap-1 text-xs font-medium cursor-pointer"
               >
                 <RefreshCcw className="w-4 h-4" /> Reset
               </button>
@@ -189,14 +208,16 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
             
             <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
               <button
+                type="button"
                 onClick={onClose}
-                className="px-5 py-2.5 rounded-xl font-medium text-sm text-foreground bg-muted hover:bg-border transition-colors w-full sm:w-auto"
+                className="px-5 py-2.5 rounded-xl font-medium text-sm text-foreground bg-muted hover:bg-border transition-colors w-full sm:w-auto cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleApplyCrop}
-                className="px-6 py-2.5 rounded-xl font-bold text-sm text-white bg-primary-btn hover:bg-primary-hover flex items-center justify-center gap-2 transition-colors shadow-lg w-full sm:w-auto"
+                className="px-6 py-2.5 rounded-xl font-bold text-sm text-white bg-primary-btn hover:bg-primary-hover flex items-center justify-center gap-2 transition-colors shadow-lg w-full sm:w-auto cursor-pointer"
               >
                 <Check className="w-4 h-4" />
                 Apply Crop

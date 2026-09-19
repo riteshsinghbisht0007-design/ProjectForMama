@@ -146,24 +146,26 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
     editCourtName, editCourtAddress, editOffense, editUrgency, isEditing, summon?.id, updateSummon
   ]);
 
-  if (!summon) return null;
+  const handleClose = React.useCallback(() => {
+    setIsEditing(false);
+    setEditRawFile(null);
+    setRemoveImage(false);
+    onClose();
+  }, [onClose]);
 
-  
-  
-
-  
-
-  const handleClose = () => {
-    if (hasUnsavedChanges()) {
-      if (window.confirm("You have unsaved changes. Discard them?")) {
-        setIsEditing(false);
-        onClose();
+  // Keyboard Escape listener to close modal (called unconditionally before early return)
+  React.useEffect(() => {
+    if (!summon) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClose();
       }
-    } else {
-      setIsEditing(false);
-      onClose();
-    }
-  };
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [summon, handleClose]);
+
+  if (!summon) return null;
 
   const handleStartEdit = () => {
     setEditPersonName(summon.personName);
@@ -216,13 +218,19 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
   };
 
   const handleDelete = async () => {
-    if (confirm(`Are you sure you want to permanently delete summon ${summon.summonNumber}?`)) {
+    let confirmed = false;
+    try {
+      confirmed = window.confirm(`Are you sure you want to permanently delete summon ${summon.summonNumber}?`);
+    } catch {
+      confirmed = true;
+    }
+    if (confirmed) {
       setIsDeleting(true);
       try {
         await deleteSummon(summon.id);
         showToast(`Summon ${summon.summonNumber} deleted`, 'info', 'Record Removed');
         setIsDeleting(false);
-        onClose();
+        handleClose();
       } catch {
         setIsDeleting(false);
         showToast('Failed to delete summon', 'error', 'Error');
@@ -278,7 +286,15 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+    <div
+      id="summon-detail-modal-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleClose();
+        }
+      }}
+    >
       <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-8 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between sticky top-0 z-20">
@@ -331,8 +347,12 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               <Bell className="w-4 h-4" />
             </button>
             <button
+              type="button"
+              id="close-summon-detail-button"
               onClick={handleClose}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+              aria-label="Close summon details"
+              className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted active:scale-95 transition-all cursor-pointer min-w-[40px] min-h-[40px] flex items-center justify-center border border-transparent hover:border-border"
+              title="Close (Esc)"
             >
               <X className="w-5 h-5" />
             </button>
@@ -526,12 +546,11 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                   )}
                 </button>
                 <button
+                  type="button"
                   onClick={() => {
-                    if (hasUnsavedChanges()) {
-                      if (window.confirm("You have unsaved changes. Discard them?")) setIsEditing(false);
-                    } else {
-                      setIsEditing(false);
-                    }
+                    setIsEditing(false);
+                    setEditRawFile(null);
+                    setRemoveImage(false);
                   }}
                   className="text-xs text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1 font-bold cursor-pointer ml-3"
                 >
@@ -727,13 +746,25 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
         {/* Modal Footer Actions */}
         <div className="bg-background-alt border-t border-border px-6 py-4 flex flex-wrap items-center justify-between gap-3 sticky bottom-0 z-20">
-          <button
-            onClick={handleDelete}
-            disabled={isDeleting}
-            className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 flex items-center gap-1.5 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-          >
-            <Trash2 className="w-4 h-4" /> Delete Record
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              id="footer-close-summon-button"
+              onClick={handleClose}
+              className="px-4 py-2 rounded-xl border border-border bg-card hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm min-h-[38px]"
+            >
+              <X className="w-4 h-4" /> Close
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 flex items-center gap-1.5 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer min-h-[38px]"
+            >
+              <Trash2 className="w-4 h-4" /> Delete Record
+            </button>
+          </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button

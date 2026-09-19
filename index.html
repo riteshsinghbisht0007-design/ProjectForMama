@@ -24,11 +24,37 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
   
     <script>
+      // Suppress benign Vite dev HMR websocket connection notices
+      window.addEventListener('unhandledrejection', function (e) {
+        var reason = e && (e.reason || e.detail);
+        var msg = (reason && (reason.message || reason.stack || String(reason))) || '';
+        if (
+          msg.includes('WebSocket closed without opened') ||
+          msg.includes('failed to connect to websocket') ||
+          msg.includes('WebSocket') ||
+          msg.includes('[vite]')
+        ) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      });
+      window.addEventListener('error', function (e) {
+        var msg = (e && (e.message || '')) || '';
+        if (
+          msg.includes('WebSocket closed without opened') ||
+          msg.includes('failed to connect to websocket') ||
+          msg.includes('[vite]')
+        ) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      });
+
       if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
         document.documentElement.classList.remove('dark')
       } else {

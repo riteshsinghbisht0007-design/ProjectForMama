@@ -54,6 +54,18 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
   // Copy tracking
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Keyboard Escape listener (registered unconditionally at the top of the component)
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleOpenAdd = () => {
@@ -181,7 +193,15 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+    <div
+      id="witness-directory-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div className="bg-background border border-border rounded-2xl w-full max-w-4xl overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">

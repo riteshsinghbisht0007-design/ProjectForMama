@@ -52,6 +52,17 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
     }
   }, [currentUser]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !currentUser) return null;
 
   const handleSave = async (e: React.FormEvent) => {
@@ -118,7 +129,15 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md  overflow-y-auto animate-fadeIn">
+    <div
+      id="officer-profile-modal-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
+    >
       <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col">
         {/* Header */}
         <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
@@ -134,8 +153,10 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            aria-label="Close profile settings"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>

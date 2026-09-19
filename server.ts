@@ -1447,11 +1447,17 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
   // Serve Frontend Assets: Vite middleware in Development, static dist/ in Production
   if (!isProduction) {
     const vite = await createViteServer({
-      server: { middlewareMode: true, host: '0.0.0.0', port: 3000 },
+      server: {
+        middlewareMode: true,
+        host: '0.0.0.0',
+        port: 3000,
+        hmr: false,
+        ws: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-    console.info('[Server] Vite middleware attached for live development.');
+    console.info('[Server] Vite middleware attached for live development (HMR disabled).');
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));

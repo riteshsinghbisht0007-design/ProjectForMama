@@ -31,6 +31,15 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   const handleEnablePush = async () => {
     const result = await requestPushPermissionAndSubscribe();
     setPermission(getNotificationPermissionState());
@@ -63,7 +72,15 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
+    <div
+      id="notification-panel-backdrop"
+      className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div className="bg-background border-l border-border w-full max-w-sm h-full shadow-2xl flex flex-col animate-slideInRight">
         {/* Header */}
         <div className="bg-background border-b border-border px-5 py-4 flex items-center justify-between">
@@ -78,6 +95,7 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
           <div className="flex items-center gap-2">
             {unreadCount > 0 && (
               <button 
+                type="button"
                 onClick={() => markAllAsRead()}
                 className="text-xs text-primary-text hover:underline font-medium cursor-pointer"
               >
@@ -85,8 +103,11 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
               </button>
             )}
             <button
+              type="button"
+              id="close-notifications-panel-btn"
               onClick={onClose}
-              className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+              aria-label="Close notifications"
+              className="p-1.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted active:scale-95 transition-all cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center border border-transparent hover:border-border"
             >
               <X className="w-5 h-5" />
             </button>
@@ -118,6 +139,7 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
 
               {permission === 'granted' ? (
                 <button
+                  type="button"
                   onClick={handleTestPush}
                   disabled={isTesting}
                   id="test-push-btn"
@@ -129,6 +151,7 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
                 </button>
               ) : permission === 'default' ? (
                 <button
+                  type="button"
                   onClick={handleEnablePush}
                   id="enable-push-panel-btn"
                   className="text-[11px] text-white bg-primary hover:bg-primary/90 font-medium px-2 py-1 rounded transition-colors cursor-pointer"
@@ -165,12 +188,22 @@ export const NotificationPanelModal: React.FC<NotificationPanelModalProps> = ({
               return (
                 <div
                   key={n.id}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      markAsRead(n.id);
+                      onSelectSummon(n.summonsId);
+                      onClose();
+                    }
+                  }}
                   onClick={() => {
                     markAsRead(n.id);
                     onSelectSummon(n.summonsId);
                     onClose();
                   }}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all hover:bg-card-hover flex flex-col gap-2 relative ${
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all hover:bg-card-hover flex flex-col gap-2 relative focus:outline-none focus:ring-2 focus:ring-primary ${
                     !n.isRead ? 'bg-card border-[#2563EB]/50 shadow-sm' : 'bg-background-alt border-border opacity-70'
                   }`}
                 >
