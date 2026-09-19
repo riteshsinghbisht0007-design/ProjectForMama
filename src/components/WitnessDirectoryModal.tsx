@@ -153,9 +153,11 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
   };
 
   const handleDelete = async (id: string, personName: string) => {
-    if (window.confirm(`Are you sure you want to remove ${personName} from the directory?`)) {
+    try {
       await deleteWitness(id);
       showToast(`${personName} removed from directory`, 'info');
+    } catch {
+      showToast('Failed to delete person', 'error');
     }
   };
 
@@ -217,7 +219,9 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close dialog"
             className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -310,10 +314,10 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <span
                             className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase font-bold ${
                               w.role === 'Witness'
-                                ? 'bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800'
+                                ? 'bg-muted text-foreground border border-border'
                                 : w.role === 'Accused'
                                 ? 'bg-red-50 text-red-700 border border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
-                                : 'bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-warning-muted dark:text-warning dark:border-warning/30'
+                                : 'bg-muted text-foreground border border-border'
                             }`}
                           >
                             {w.role}
@@ -343,7 +347,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           )}
 
                           {w.summonCaseNo && (
-                            <div className="text-[11px] text-[#2563EB] dark:text-warning font-medium">
+                            <div className="text-[11px] text-primary-text font-medium">
                               Linked Case: <span className="font-mono">{w.summonCaseNo}</span>
                             </div>
                           )}
@@ -363,6 +367,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                             type="button"
                             onClick={() => handleCopy(w)}
                             title="Copy formatted dispatch text"
+                            aria-label="Copy formatted dispatch text"
                             className="p-1.5 rounded-lg text-muted-foreground btn-premium cursor-pointer"
                           >
                             {copiedId === w.id ? (
@@ -375,6 +380,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                             type="button"
                             onClick={() => handleForward(w)}
                             title="Forward via WhatsApp / Device Share"
+                            aria-label="Forward via WhatsApp or Device Share"
                             className="p-1.5 rounded-lg text-primary-text btn-premium cursor-pointer"
                           >
                             <Share2 className="w-3.5 h-3.5" />
@@ -385,6 +391,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(w)}
+                            aria-label="Edit witness particulars"
                             className="p-1.5 rounded-lg text-foreground btn-premium cursor-pointer"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
@@ -392,6 +399,7 @@ export const WitnessDirectoryModal: React.FC<WitnessDirectoryModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleDelete(w.id, w.name)}
+                            aria-label="Delete witness record"
                             className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-600 text-muted-foreground dark:hover:bg-red-950/40 dark:text-red-400 dark:hover:text-red-300 transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

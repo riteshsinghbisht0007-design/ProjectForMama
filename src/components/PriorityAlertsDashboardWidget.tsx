@@ -38,11 +38,20 @@ export const PriorityAlertsDashboardWidget: React.FC<PriorityAlertsDashboardWidg
           return (
               <div
                 key={n.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`View summon ${n.title}`}
                 onClick={() => onSelectSummon(n.summonsId)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectSummon(n.summonsId);
+                  }
+                }}
                 className={`p-4 rounded-xl border card-premium cursor-pointer transition-all flex flex-col justify-between ${
                   isOverdue ? 'bg-red-50/70 border-red-200 hover:border-red-300 dark:bg-red-950/20 dark:border-red-800/40' : 
                   isToday ? 'bg-amber-50/70 border-amber-200 hover:border-amber-300 dark:bg-amber-950/20 dark:border-amber-800/40' : 
-                  'bg-blue-50/70 border-blue-200 hover:border-blue-300 dark:bg-card dark:border-border'
+                  'bg-card border-border hover:border-border-strong dark:bg-card dark:border-border'
                 }`}
               >
                 <div>
@@ -50,7 +59,7 @@ export const PriorityAlertsDashboardWidget: React.FC<PriorityAlertsDashboardWidg
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
                       isOverdue ? 'bg-red-100 text-red-800 border border-red-200 dark:bg-red-900/60 dark:text-red-300' :
                       isToday ? 'bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/60 dark:text-amber-300' :
-                      'bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-900/60 dark:text-blue-300'
+                      'bg-muted text-foreground border border-border dark:bg-muted dark:text-foreground'
                     }`}>
                       {isOverdue ? '⚠️ OVERDUE' : isToday ? '🔴 TODAY' : '🟠 TOMORROW'}
                     </span>

@@ -21,9 +21,8 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       label: 'Total Summons',
       count: metrics.total,
       icon: FileText,
-      color: '#2563EB',
-      bgActive: 'border-[#2563EB] bg-[#EFF6FF] dark:border-primary-text dark:bg-card-hover',
-      badgeBg: 'bg-[#EFF6FF] text-[#2563EB] dark:bg-muted dark:text-foreground',
+      bgActive: 'border-border-strong bg-muted dark:border-border-strong dark:bg-card-hover',
+      badgeBg: 'bg-muted text-primary-text dark:bg-muted dark:text-foreground',
     },
     {
       id: 'metric-pending',
@@ -31,7 +30,6 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       label: 'Pending Service',
       count: metrics.pending,
       icon: Clock,
-      color: '#D97706',
       bgActive: 'border-amber-400 bg-amber-50/80 dark:border-warning dark:bg-warning-muted/40',
       badgeBg: 'bg-amber-100 text-amber-800 dark:bg-warning-muted/50 dark:text-warning',
     },
@@ -41,9 +39,8 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       label: 'Upcoming Court',
       count: metrics.upcoming,
       icon: Calendar,
-      color: '#2563EB',
-      bgActive: 'border-[#2563EB] bg-[#EFF6FF] dark:border-primary-text dark:bg-card',
-      badgeBg: 'bg-[#DBEAFE] text-[#1E3A8A] dark:bg-info-muted/60 dark:text-primary-text',
+      bgActive: 'border-border-strong bg-muted dark:border-border-strong dark:bg-card',
+      badgeBg: 'bg-muted text-primary-text dark:bg-muted dark:text-primary-text',
     },
     {
       id: 'metric-completed',
@@ -51,7 +48,6 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
       label: 'Served & Closed',
       count: metrics.completed,
       icon: CheckCircle2,
-      color: '#059669',
       bgActive: 'border-emerald-400 bg-emerald-50/80 dark:border-success dark:bg-success-muted/30',
       badgeBg: 'bg-emerald-100 text-emerald-800 dark:bg-success-muted/60 dark:text-success',
     },
@@ -65,13 +61,15 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
 
         return (
           <button
+            type="button"
             key={card.id}
             id={card.id}
             onClick={() => onSelectFilter(card.filter)}
+            aria-label={`Filter by ${card.label}`}
             className={`text-left p-4 rounded-xl border card-premium relative overflow-hidden transition-all duration-200 cursor-pointer ${
               isSelected
-                ? `${card.bgActive} shadow-sm ring-2 ring-[#2563EB]/25 dark:ring-white/10`
-                : 'bg-card border-border hover:border-[#60A5FA] hover:shadow-sm'
+                ? `${card.bgActive} shadow-sm ring-2 ring-primary/25 dark:ring-white/10`
+                : 'bg-card border-border hover:border-border-strong hover:shadow-sm'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
@@ -90,7 +88,7 @@ export const MetricCardsGrid: React.FC<MetricCardsGridProps> = ({
             </div>
             {isSelected && (
               <div className="mt-2 text-[10px] font-mono text-primary-text flex items-center gap-1 font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#2563EB] dark:bg-[#ADC8F5]"></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-btn dark:bg-[#ADC8F5]"></span>
                 Filtering active
               </div>
             )}

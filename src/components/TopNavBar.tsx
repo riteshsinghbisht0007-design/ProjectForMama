@@ -3,21 +3,25 @@ import { Shield, Bell, User, Clock, CheckCircle2, Users, Sun, Moon } from 'lucid
 import { useAuth } from '../context/AuthContext';
 import { useSummons } from '../context/SummonContext';
 import { useNotifications } from '../context/NotificationContext';
+import { NotificationCenterDropdown } from './NotificationCenterDropdown';
 
 interface TopNavBarProps {
   onOpenProfile: () => void;
-  onOpenAlerts: () => void;
+  onOpenAlerts?: () => void;
   onOpenWitnessDirectory?: () => void;
+  onSelectSummon: (summonsId: string) => void;
 }
 
 export const TopNavBar: React.FC<TopNavBarProps> = ({
   onOpenProfile,
   onOpenAlerts,
   onOpenWitnessDirectory,
+  onSelectSummon,
 }) => {
   const { currentUser } = useAuth();
   const { summons } = useSummons();
   const [isDark, setIsDark] = useState(true);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
 
   useEffect(() => {
     setIsDark(document.documentElement.classList.contains('dark'));
@@ -130,22 +134,42 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             </button>
           )}
 
-          {/* Urgent Alerts Bell */}
-          <button
-            type="button"
-            onClick={onOpenAlerts}
-            id="alerts-bell-btn"
-            aria-label="Judicial hearing alerts"
-            title="Judicial hearing alerts"
-            className="relative p-2 rounded-lg bg-card border border-border text-foreground hover:border-primary-btn hover:shadow-sm btn-premium cursor-pointer"
-          >
-            <Bell className="w-4 h-4" />
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
-                {unreadCount}
-              </span>
-            )}
-          </button>
+          {/* Urgent Alerts Bell & Notification Center Dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setIsNotificationOpen((prev) => !prev);
+                if (onOpenAlerts) onOpenAlerts();
+              }}
+              id="alerts-bell-btn"
+              aria-label={`Notifications and judicial alerts (${unreadCount} unread)`}
+              aria-expanded={isNotificationOpen}
+              aria-haspopup="true"
+              title="Notifications & Hearing Alerts"
+              className={`relative p-2 rounded-lg bg-card border text-foreground hover:border-primary-btn hover:text-primary-btn hover:shadow-sm btn-premium cursor-pointer transition-all duration-150 active:scale-95 ${
+                isNotificationOpen
+                  ? 'border-primary-btn text-primary-btn ring-2 ring-primary-btn/20 shadow-sm'
+                  : 'border-border'
+              }`}
+            >
+              <Bell className={`w-4 h-4 transition-transform duration-200 ${isNotificationOpen ? 'rotate-12' : ''}`} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-600 dark:bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-md animate-pulse pointer-events-none">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            <NotificationCenterDropdown
+              isOpen={isNotificationOpen}
+              onClose={() => setIsNotificationOpen(false)}
+              onSelectSummon={(summonId) => {
+                setIsNotificationOpen(false);
+                onSelectSummon(summonId);
+              }}
+            />
+          </div>
 
           {/* Profile Avatar Button */}
           <button

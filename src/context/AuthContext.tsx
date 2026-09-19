@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { OfficerUser } from '../types';
 import { auth, googleProvider, facebookProvider, signInWithPopup, signOut as firebaseSignOut } from '../services/firebase';
+import { unsubscribeFromPush } from '../services/fcmService';
 
 interface AuthContextType {
   currentUser: OfficerUser | null;
@@ -234,6 +235,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
+      await unsubscribeFromPush().catch(() => {});
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
       await firebaseSignOut(auth).catch(() => {});
       sessionStorage.removeItem('summonsmitra_welcomed');

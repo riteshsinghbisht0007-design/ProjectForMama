@@ -354,7 +354,7 @@ export const AuthScreen: React.FC = () => {
                   onClick={handleGoogleAuth}
                   disabled={loading}
                   id="btn-google-login"
-                  className="relative z-10 w-full py-2.5 px-4 rounded-xl border border-border bg-card hover:bg-card-hover hover:border-[#2563EB] text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-all duration-200 shadow-sm disabled:opacity-50 cursor-pointer"
+                  className="relative z-10 w-full py-2.5 px-4 rounded-xl border border-border bg-card hover:bg-card-hover hover:border-border-strong text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-all duration-200 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin text-primary-text" />

@@ -213,7 +213,7 @@ export const SelectPersonModal: React.FC<SelectPersonModalProps> = ({
                           <span className="font-bold text-foreground text-sm group-hover:text-primary-text transition-colors">
                             {p.name}
                           </span>
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] dark:bg-muted dark:text-primary-text dark:border-border-strong">
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono uppercase bg-muted text-foreground border border-border">
                             {p.role}
                           </span>
                           {p.fatherName && (
@@ -237,7 +237,8 @@ export const SelectPersonModal: React.FC<SelectPersonModalProps> = ({
 
                       <button
                         type="button"
-                        className="p-2 rounded-lg bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] group-hover:bg-[#2563EB] group-hover:text-white dark:bg-muted dark:text-primary-text transition-colors shrink-0 ml-3"
+                        aria-label={`Select ${p.name}`}
+                        className="p-2 rounded-lg bg-muted text-foreground border border-border group-hover:bg-primary-btn group-hover:text-white transition-colors shrink-0 ml-3"
                       >
                         <UserCheck className="w-4 h-4" />
                       </button>

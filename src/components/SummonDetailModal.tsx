@@ -66,6 +66,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
   const [cropFileName, setCropFileName] = useState<string>('');
   const [cropMimeType, setCropMimeType] = useState<string>('image/jpeg');
   const [isFullImageOpen, setIsFullImageOpen] = useState<boolean>(false);
+  const [viewingOriginalPhoto, setViewingOriginalPhoto] = useState<boolean>(false);
   
   const handleEditImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -218,23 +219,15 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
   };
 
   const handleDelete = async () => {
-    let confirmed = false;
+    setIsDeleting(true);
     try {
-      confirmed = window.confirm(`Are you sure you want to permanently delete summon ${summon.summonNumber}?`);
+      await deleteSummon(summon.id);
+      showToast(`Summon ${summon.summonNumber} deleted`, 'info', 'Record Removed');
+      setIsDeleting(false);
+      handleClose();
     } catch {
-      confirmed = true;
-    }
-    if (confirmed) {
-      setIsDeleting(true);
-      try {
-        await deleteSummon(summon.id);
-        showToast(`Summon ${summon.summonNumber} deleted`, 'info', 'Record Removed');
-        setIsDeleting(false);
-        handleClose();
-      } catch {
-        setIsDeleting(false);
-        showToast('Failed to delete summon', 'error', 'Error');
-      }
+      setIsDeleting(false);
+      showToast('Failed to delete summon', 'error', 'Error');
     }
   };
 
@@ -305,7 +298,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/80 dark:text-emerald-400'
                   : summon.urgency === 'Urgent'
                   ? 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/80 dark:text-red-400'
-                  : 'bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] dark:bg-primary-muted dark:text-primary-text'
+                  : 'bg-muted text-primary-text border border-border'
               }`}
             >
               <Shield className="w-5 h-5" />
@@ -336,8 +329,10 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={handleToggleReminder}
               title="Toggle Hearing Reminder"
+              aria-label="Toggle Hearing Reminder"
               className={`p-2 rounded-lg border transition-colors cursor-pointer ${
                 summon.reminderEnabled
                   ? 'bg-amber-50 border-amber-300 text-amber-800 dark:bg-warning/20 dark:border-warning dark:text-warning'
@@ -393,6 +388,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
             {summon.status !== 'Completed' && (
               <button
+                type="button"
                 onClick={() => setShowMarkServedModal(true)}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow cursor-pointer"
               >
@@ -435,7 +431,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                         <input id="edit-replace-photo" type="file" accept="image/*" onChange={handleEditImageUpload} className="hidden" />
                         Replace Photo
                       </label>
-                      <button onClick={() => setRemoveImage(true)} className="px-3 py-1.5 rounded-lg text-red-400 hover:bg-red-950/30 text-xs transition-colors">
+                      <button type="button" onClick={() => setRemoveImage(true)} className="px-3 py-1.5 rounded-lg text-red-400 hover:bg-red-950/30 text-xs transition-colors cursor-pointer">
                         Remove Photo
                       </button>
                     </div>
@@ -454,17 +450,51 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                 )}
               </div>
             ) : (
-              summon.imageUrl ? (
-                <div className="border border-border rounded-xl overflow-hidden bg-black/40 p-2 flex flex-col items-center">
+              summon.imageUrl || summon.originalImageUrl ? (
+                <div className="border border-border rounded-xl overflow-hidden bg-black/40 p-3 flex flex-col items-center">
+                  {summon.originalImageUrl && summon.imageUrl && (
+                    <div className="flex items-center gap-1.5 bg-muted p-1 rounded-xl border border-border mb-3 self-center">
+                      <button
+                        type="button"
+                        onClick={() => setViewingOriginalPhoto(false)}
+                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          !viewingOriginalPhoto
+                            ? 'bg-card text-foreground shadow-sm font-bold border border-border'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Cropped (OCR)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewingOriginalPhoto(true)}
+                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          viewingOriginalPhoto
+                            ? 'bg-card text-foreground shadow-sm font-bold border border-border'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Original Photo
+                      </button>
+                    </div>
+                  )}
+
                   <img
-                    src={summon.imageUrl}
+                    src={viewingOriginalPhoto && summon.originalImageUrl ? summon.originalImageUrl : (summon.imageUrl || summon.originalImageUrl)}
                     alt="Summon document copy"
-                    className="max-h-72 object-contain rounded-lg border border-border-strong mb-2 cursor-pointer"
+                    className="max-h-72 object-contain rounded-lg border border-border-strong mb-2 cursor-pointer shadow-sm hover:opacity-95 transition-opacity"
                     onClick={() => setIsFullImageOpen(true)}
                   />
-                  <button onClick={() => setIsFullImageOpen(true)} className="text-[11px] text-cyan-400 hover:underline mb-1">
-                    View Full Image
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setIsFullImageOpen(true)} className="text-[11px] text-primary-text hover:underline cursor-pointer">
+                      View Full Image
+                    </button>
+                    {summon.originalImageUrl && (
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        {viewingOriginalPhoto ? '• Preserved Original' : '• Scanned Document'}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="border border-border border-dashed rounded-xl overflow-hidden bg-black/20 p-6 flex flex-col items-center justify-center">
@@ -484,21 +514,25 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
         />
       )}
           {/* Full Image Modal */}
-          {isFullImageOpen && summon?.imageUrl && (
+          {isFullImageOpen && (summon?.imageUrl || summon?.originalImageUrl) && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8 bg-black/90 backdrop-blur-sm" onClick={() => setIsFullImageOpen(false)}>
               <div className="relative max-w-5xl w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => setIsFullImageOpen(false)} className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black text-white rounded-full transition-colors z-10">
+                <button type="button" aria-label="Close full image view" onClick={() => setIsFullImageOpen(false)} className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black text-white rounded-full transition-colors z-10 cursor-pointer">
                   <X className="w-6 h-6" />
                 </button>
-                <img src={summon.imageUrl} alt="Full Summons Photo" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
+                <img
+                  src={viewingOriginalPhoto && summon.originalImageUrl ? summon.originalImageUrl : (summon.imageUrl || summon.originalImageUrl)}
+                  alt="Full Summons Photo"
+                  className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                />
               </div>
             </div>
           )}
 
           {summon.pdfUrl && (
-            <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl flex items-center justify-between">
+            <div className="p-4 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-xl flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-[#EFF6FF] dark:bg-muted rounded-lg text-primary-text">
+                <div className="p-2.5 bg-muted rounded-lg text-primary-text">
                   <FileText className="w-5 h-5" />
                 </div>
                 <div>
@@ -525,6 +559,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               </span>
               {!isEditing ? (
                 <button
+                  type="button"
                   onClick={handleStartEdit}
                   className="text-xs text-primary-text hover:underline flex items-center gap-1 cursor-pointer font-semibold"
                 >
@@ -533,37 +568,38 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
               ) : (
                 <div className="flex items-center">
                   <button
-                  onClick={handleSaveEdit}
-                  disabled={saveStatus === 'saving'}
-                  className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer disabled:opacity-50"
-                >
-                  {saveStatus === 'saving' ? (
-                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
-                  ) : saveStatus === 'saved' ? (
-                    <><Check className="w-3.5 h-3.5" /> Saved</>
-                  ) : (
-                    <><Save className="w-3.5 h-3.5" /> Save / Done</>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsEditing(false);
-                    setEditRawFile(null);
-                    setRemoveImage(false);
-                  }}
-                  className="text-xs text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1 font-bold cursor-pointer ml-3"
-                >
-                  <X className="w-3.5 h-3.5" /> Cancel
-                </button>
+                    type="button"
+                    onClick={handleSaveEdit}
+                    disabled={saveStatus === 'saving'}
+                    className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    {saveStatus === 'saving' ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...</>
+                    ) : saveStatus === 'saved' ? (
+                      <><Check className="w-3.5 h-3.5" /> Saved</>
+                    ) : (
+                      <><Save className="w-3.5 h-3.5" /> Save / Done</>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditing(false);
+                      setEditRawFile(null);
+                      setRemoveImage(false);
+                    }}
+                    className="text-xs text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1 font-bold cursor-pointer ml-3"
+                  >
+                    <X className="w-3.5 h-3.5" /> Cancel
+                  </button>
                 </div>
               )}
             </div>
 
             {/* Respondent & Address Box */}
-            <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl space-y-3">
+            <div className="p-4 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-xl space-y-3">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-[#EFF6FF] dark:bg-muted text-primary-text shrink-0 mt-1">
+                <div className="p-2 rounded-lg bg-muted text-primary-text shrink-0 mt-1">
                   <User className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -628,7 +664,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
             {/* Court & Appearance Box */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl">
+              <div className="p-4 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-xl">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 font-semibold">
                   <Building2 className="w-3.5 h-3.5 text-primary-text" />
                   <span>COURT & BENCH</span>
@@ -661,7 +697,7 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
                 )}
               </div>
 
-              <div className="p-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-xl">
+              <div className="p-4 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-xl">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 font-semibold">
                   <Calendar className="w-3.5 h-3.5 text-warning" />
                   <span>HEARING TIMELINE</span>
@@ -768,31 +804,39 @@ export const SummonDetailModal: React.FC<SummonDetailModalProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
               onClick={handleCopyText}
-              className="px-3.5 py-2 rounded-xl border border-border bg-card hover:bg-[#EFF6FF] dark:hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+              aria-label="Copy notice text"
+              className="px-3.5 py-2 rounded-xl border border-border bg-card hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
             >
               {copied ? <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied' : 'Copy Notice Text'}
             </button>
 
             <button
+              type="button"
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf}
-              className="px-3.5 py-2 rounded-xl bg-card hover:bg-[#EFF6FF] text-foreground text-xs font-bold flex items-center gap-1.5 border border-border transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
+              aria-label="Download official notice PDF"
+              className="px-3.5 py-2 rounded-xl bg-card hover:bg-muted text-foreground text-xs font-bold flex items-center gap-1.5 border border-border transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
             >
               {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-warning" /> : <FileText className="w-4 h-4 text-primary-text" />}
               <span>Notice PDF</span>
             </button>
 
             <button
+              type="button"
               onClick={() => onOpenSplitScreenshot(summon)}
-              className="px-4 py-2 rounded-xl bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#1E3A8A] dark:bg-primary-muted dark:hover:bg-primary-btn dark:text-white text-xs font-bold flex items-center gap-1.5 border border-[#DBEAFE] dark:border-transparent transition-colors cursor-pointer shadow-sm"
+              aria-label="Open visual split screenshot"
+              className="px-4 py-2 rounded-xl bg-muted hover:bg-muted/80 text-foreground text-xs font-bold flex items-center gap-1.5 border border-border transition-colors cursor-pointer shadow-sm"
             >
               <FileImage className="w-4 h-4 text-primary-text" /> Visual Split Copy
             </button>
 
             <button
+              type="button"
               onClick={handleForwardNative}
+              aria-label="Forward summon details"
               className="px-5 py-2 rounded-xl bg-primary-btn hover:bg-primary-hover text-white text-xs font-bold flex items-center gap-1.5 shadow transition-colors cursor-pointer"
             >
               <Share2 className="w-4 h-4" /> Forward Summon

@@ -177,7 +177,9 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-primary-text">Formatted Dispatch Text (For Field Officers / WhatsApp):</span>
               <button
+                type="button"
                 onClick={handleCopyText}
+                aria-label="Copy dispatch text to clipboard"
                 className="text-xs text-primary-text hover:underline flex items-center gap-1 cursor-pointer"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -208,7 +210,9 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
               onClick={handleCopyText}
+              aria-label="Copy dispatch text"
               className="px-3.5 py-2 rounded-xl border border-border hover:bg-muted text-xs font-medium text-foreground flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
             >
               {copied ? <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-4 h-4" />}
@@ -216,26 +220,32 @@ export const SplitScreenshotModal: React.FC<SplitScreenshotModalProps> = ({
             </button>
 
             <button
+              type="button"
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf}
               id="download-pdf-modal-btn"
+              aria-label="Download official notice PDF"
               className="px-3.5 py-2 rounded-xl bg-card hover:bg-muted text-foreground text-xs font-bold flex items-center gap-1.5 border border-border transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
             >
-              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-[#2563EB]" /> : <FileText className="w-4 h-4 text-[#2563EB]" />}
+              {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin text-primary-text" /> : <FileText className="w-4 h-4 text-primary-text" />}
               <span>Download PDF</span>
             </button>
 
             <button
+              type="button"
               onClick={handleDownload}
               disabled={!splitImageUrl || isGenerating}
-              className="px-3.5 py-2 rounded-xl bg-[#EFF6FF] text-[#1E3A8A] border border-[#DBEAFE] hover:bg-[#DBEAFE] dark:bg-primary-muted dark:text-white dark:border-border text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
+              aria-label="Download composite image"
+              className="px-3.5 py-2 rounded-xl bg-muted hover:bg-muted/80 text-foreground border border-border text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
             >
               <Download className="w-4 h-4" /> Download Image
             </button>
 
             <button
+              type="button"
               onClick={handleShare}
               disabled={!splitImageUrl || isGenerating || sharing}
+              aria-label="Forward and share summon"
               className="px-4 py-2 rounded-xl bg-primary-btn hover:bg-primary-hover text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Share2 className="w-4 h-4" /> Forward & Share

@@ -401,44 +401,163 @@ export const scanSummonDocument = async (
   };
 };
 
-// Parse judicial QR code payload
+// Parse judicial QR code payload (handles e-Courts URLs, JSON, key-value pairs, raw CNR, and text blocks)
 export const parseJudicialQRCode = (qrContent: string): Partial<ExtractedSummonData> => {
+  if (!qrContent || typeof qrContent !== 'string') return {};
+  const trimmed = qrContent.trim();
+  if (!trimmed) return {};
+
   try {
-    if (qrContent.startsWith('{') && qrContent.endsWith('}')) {
-      const parsed = JSON.parse(qrContent);
-      return {
-        summonNumber: parsed.summonNumber || parsed.summonNo || '',
-        caseNumber: parsed.caseNumber || parsed.firNo || parsed.fir || '',
-        personName: parsed.personName || parsed.accused || parsed.name || '',
-        fatherName: parsed.fatherName || '',
-        address: parsed.address || parsed.addr || '',
-        courtName: parsed.courtName || parsed.court || '',
-        hearingDate: normalizeJudicialDate(parsed.hearingDate || parsed.date || ''),
-        offenseCharges: parsed.offenseCharges || parsed.sections || '',
-      };
-    }
-
-    // e-Courts format: CNR:XX; FIR:YY; Court:ZZ; Accused:AA; Date:BB
-    const parts = qrContent.split(/[;\n]/);
-    const result: Record<string, string> = {};
-
-    for (const part of parts) {
-      const [key, ...vals] = part.split(/[:=]/);
-      if (key && vals.length > 0) {
-        result[key.trim().toLowerCase()] = vals.join(':').trim();
+    // 1. JSON Format
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      const parsed = JSON.parse(trimmed);
+      const obj = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (obj && typeof obj === 'object') {
+        const cnr = obj.cnr || obj.cino || obj.cnrNumber || obj.cnrNo || '';
+        return {
+          summonNumber: obj.summonNumber || obj.summonNo || cnr || '',
+          caseNumber: obj.caseNumber || obj.caseNo || obj.firNo || obj.fir || cnr || '',
+          personName: obj.personName || obj.accused || obj.name || obj.respondent || '',
+          fatherName: obj.fatherName || obj.father || '',
+          address: obj.address || obj.addr || '',
+          courtName: obj.courtName || obj.court || obj.courtComplex || '',
+          courtAddress: obj.courtAddress || obj.courtAddr || '',
+          policeStation: obj.policeStation || obj.ps || '',
+          district: obj.district || obj.dist || '',
+          state: obj.state || '',
+          hearingDate: normalizeJudicialDate(obj.hearingDate || obj.nextDate || obj.date || ''),
+          offenseCharges: obj.offenseCharges || obj.charges || obj.sections || obj.sec || '',
+        };
       }
     }
 
+    // 2. URL Format (e.g., https://services.ecourts.gov.in/ecourtindia_v6/?cnr=DLCT010012342023 or /case?cnr=...)
+    if (/^https?:\/\//i.test(trimmed)) {
+      try {
+        const url = new URL(trimmed);
+        const params = url.searchParams;
+        const cnr = params.get('cnr') || params.get('cino') || params.get('case_no') || params.get('caseno') || '';
+        const caseNo = params.get('case') || params.get('fir') || params.get('cr_no') || cnr;
+        const court = params.get('court') || params.get('dist') || '';
+        const date = params.get('date') || params.get('hearing') || '';
+
+        // Check if path or hash contains a 16-character CNR
+        const pathCnrMatch = trimmed.match(/([A-Z]{4}\d{12})/i);
+        const extractedCnr = cnr || (pathCnrMatch ? pathCnrMatch[1].toUpperCase() : '');
+
+        if (extractedCnr || caseNo) {
+          return {
+            summonNumber: extractedCnr ? `CNR-${extractedCnr}` : '',
+            caseNumber: extractedCnr || caseNo || '',
+            courtName: court ? `${court} Court` : 'e-Courts Judicial Portal',
+            hearingDate: date ? normalizeJudicialDate(date) : '',
+            offenseCharges: 'Docket verified via e-Courts QR URL',
+          };
+        }
+      } catch (_) {
+        // Fall through to regex-based extraction if URL parsing fails
+      }
+    }
+
+    // 3. Raw 16-character e-Courts CNR code (e.g. DLCT010012342023 or MHPU010023452024)
+    const rawCnrMatch = trimmed.match(/\b([A-Z]{4}\d{12})\b/i);
+    if (/^[A-Z]{4}\d{12}$/i.test(trimmed)) {
+      const cnr = trimmed.toUpperCase();
+      return {
+        summonNumber: `CNR-${cnr}`,
+        caseNumber: cnr,
+        courtName: 'e-Courts Judicial System',
+        offenseCharges: 'Registered e-Courts Case',
+      };
+    }
+
+    // 4. Delimited pairs: e.g. CNR:XX; Case:YY | Accused:ZZ \n Court:AA & Hearing:BB
+    const parts = trimmed.split(/[;\n|&]/);
+    const result: Record<string, string> = {};
+
+    for (const part of parts) {
+      const colonIndex = part.indexOf(':') !== -1 ? part.indexOf(':') : part.indexOf('=');
+      if (colonIndex > 0) {
+        const key = part.slice(0, colonIndex).trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+        const val = part.slice(colonIndex + 1).trim();
+        if (key && val) {
+          result[key] = val;
+        }
+      }
+    }
+
+    // Find any embedded CNR in the text
+    const embeddedCnr = rawCnrMatch ? rawCnrMatch[1].toUpperCase() : '';
+
+    const summonNumber =
+      result['summon'] ||
+      result['summonnumber'] ||
+      result['summonno'] ||
+      result['notice'] ||
+      result['cnr'] ||
+      result['cino'] ||
+      (embeddedCnr ? `CNR-${embeddedCnr}` : '');
+
+    const caseNumber =
+      result['case'] ||
+      result['casenumber'] ||
+      result['caseno'] ||
+      result['fir'] ||
+      result['firno'] ||
+      result['crno'] ||
+      result['cnr'] ||
+      embeddedCnr ||
+      '';
+
+    const personName =
+      result['accused'] ||
+      result['respondent'] ||
+      result['person'] ||
+      result['name'] ||
+      result['summoned'] ||
+      '';
+
+    const fatherName = result['father'] || result['fathername'] || result['relation'] || '';
+    const address = result['address'] || result['addr'] || result['residence'] || '';
+    const courtName =
+      result['court'] || result['courtname'] || result['complex'] || result['judge'] || '';
+    const courtAddress = result['courtaddress'] || result['courtaddr'] || '';
+    const policeStation = result['ps'] || result['policestation'] || result['thana'] || '';
+    const district = result['district'] || result['dist'] || '';
+    const state = result['state'] || '';
+    const rawHearing =
+      result['date'] ||
+      result['hearing'] ||
+      result['hearingdate'] ||
+      result['nextdate'] ||
+      result['ndoh'] ||
+      '';
+    const hearingDate = normalizeJudicialDate(rawHearing);
+    const offenseCharges =
+      result['charges'] ||
+      result['sec'] ||
+      result['section'] ||
+      result['sections'] ||
+      result['act'] ||
+      result['offense'] ||
+      '';
+
     return {
-      summonNumber: result['summon'] || result['notice'] || result['cnr'] || '',
-      caseNumber: result['fir'] || result['case'] || result['cnr'] || '',
-      personName: result['accused'] || result['respondent'] || result['name'] || '',
-      address: result['address'] || result['addr'] || '',
-      courtName: result['court'] || '',
-      hearingDate: normalizeJudicialDate(result['date'] || result['hearing'] || ''),
-      offenseCharges: result['charges'] || result['sec'] || result['section'] || '',
+      summonNumber,
+      caseNumber,
+      personName,
+      fatherName,
+      address,
+      courtName,
+      courtAddress,
+      policeStation,
+      district,
+      state,
+      hearingDate,
+      offenseCharges,
     };
-  } catch {
+  } catch (err) {
+    console.warn('Error parsing judicial QR payload:', err);
     return {};
   }
 };

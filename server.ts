@@ -1164,6 +1164,9 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
               title,
               message,
               hearingDate: summon.hearingDate,
+              personName: summon.personName || '',
+              courtName: summon.courtName || '',
+              caseNumber: summon.caseNumber || summon.summonNumber || '',
               isRead: false,
               pushSent: true,
               pushSentAt: new Date().toISOString(),
@@ -1318,14 +1321,16 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
       const todayStr = today || getIndiaDateString();
 
       const summons = await db.collection('summons').find({ userId, status: { $ne: 'Completed' } }).toArray();
-      const todayDate = new Date(todayStr);
+      const [tY, tM, tD] = todayStr.split('-').map(Number);
+      const todayMidnight = Date.UTC(tY, tM - 1, tD);
       const bulkOps = [];
       
       for (const summon of summons) {
         if (!summon.hearingDate) continue;
-        const hearing = new Date(summon.hearingDate);
-        const diffTime = hearing.getTime() - todayDate.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const [hY, hM, hD] = summon.hearingDate.split('-').map(Number);
+        if (isNaN(hY) || isNaN(hM) || isNaN(hD)) continue;
+        const hearingMidnight = Date.UTC(hY, hM - 1, hD);
+        const diffDays = Math.round((hearingMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
         
         let type = null;
         let title = '';
@@ -1362,6 +1367,9 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
                   title,
                   message,
                   hearingDate: summon.hearingDate,
+                  personName: summon.personName || '',
+                  courtName: summon.courtName || '',
+                  caseNumber: summon.caseNumber || summon.summonNumber || '',
                   isRead: false,
                   pushSent: false,
                   createdAt: new Date().toISOString()

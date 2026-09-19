@@ -238,3 +238,23 @@ export async function unsubscribeFromPush(): Promise<boolean> {
     return false;
   }
 }
+
+export async function onForegroundMessage(
+  callback: (payload: any) => void
+): Promise<(() => void) | null> {
+  if (!isPushNotificationSupported()) return null;
+  try {
+    const { getMessaging, onMessage } = await import('firebase/messaging');
+    const { getApp } = await import('firebase/app');
+    const messaging = getMessaging(getApp());
+    const unsubscribe = onMessage(messaging, (payload) => {
+      console.info('[Push] Foreground FCM message received:', payload);
+      callback(payload);
+    });
+    return unsubscribe;
+  } catch (err) {
+    // Gracefully handle if Firebase SDK is in demo/fallback mode
+    return null;
+  }
+}
+

@@ -52,6 +52,7 @@ export interface Summon {
   status: SummonStatus;
   urgency: SummonUrgency;
   imageUrl?: string;
+  originalImageUrl?: string;
   pdfUrl?: string;
   fileName?: string;
   servedDate?: string;
@@ -97,6 +98,9 @@ export interface AppNotification {
   id: string;
   userId: string;
   summonsId: string;
+  personName?: string;
+  courtName?: string;
+  caseNumber?: string;
   type: NotificationType;
   title: string;
   message: string;

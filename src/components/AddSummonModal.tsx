@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useReducedMotion } from 'motion/react';
 import {
   X,
   Camera,
@@ -22,6 +23,8 @@ import {
   CheckCircle2,
   UserCheck,
   Plus,
+  FileCheck,
+  Maximize2,
 } from 'lucide-react';
 import jsQR from 'jsqr';
 import { useSummons } from '../context/SummonContext';
@@ -31,6 +34,8 @@ import { scanSummonDocument, parseJudicialQRCode, ExtractedSummonData } from '..
 import { SummonStatus, SummonUrgency, WitnessPerson } from '../types';
 import { SelectPersonModal } from './SelectPersonModal';
 import { ImageCropperModal } from './ImageCropperModal';
+import { DocumentCameraScanner, ScanResultData } from './DocumentCameraScanner';
+import { JudicialQrScannerModal } from './JudicialQrScannerModal';
 
 interface AddSummonModalProps {
   isOpen: boolean;
@@ -48,6 +53,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const { addSummon } = useSummons();
   const { currentUser } = useAuth();
   const { showToast } = useToast();
+  const shouldReduceMotion = useReducedMotion();
 
   // Workflow step
   const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload');
@@ -55,23 +61,28 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   // Attachment state
   const [rawFile, setRawFile] = useState<File | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
+  const [originalAttachmentPreview, setOriginalAttachmentPreview] = useState<string | null>(null);
+  const [viewingOriginalDoc, setViewingOriginalDoc] = useState<boolean>(false);
   const [attachmentType, setAttachmentType] = useState<'image' | 'pdf' | null>(null);
   const [fileName, setFileName] = useState<string>('');
 
-  // Camera state
+  // Full-screen camera & mobile document scanner state
+  const [isFullScreenScannerOpen, setIsFullScreenScannerOpen] = useState<boolean>(false);
+  const [scannerInitialImage, setScannerInitialImage] = useState<string | null>(null);
+  const [scannerInitialFileName, setScannerInitialFileName] = useState<string | undefined>(undefined);
+
+  // Dedicated Judicial QR modal state
+  const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
+
+  // Fallback camera states
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [cameraMode, setCameraMode] = useState<'document' | 'qr'>('document');
+  const [isCameraStarting, setIsCameraStarting] = useState<boolean>(false);
+  const [isCameraReady, setIsCameraReady] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-
-  // QR modal state
-  const [isQrActive, setIsQrActive] = useState<boolean>(false);
-  const [qrScanningLive, setQrScanningLive] = useState<boolean>(false);
-  const [qrCameraError, setQrCameraError] = useState<string | null>(null);
-  const [qrInput, setQrInput] = useState<string>('');
-  const qrVideoRef = useRef<HTMLVideoElement | null>(null);
-  const qrStreamRef = useRef<MediaStream | null>(null);
-  const qrAnimIdRef = useRef<number | null>(null);
 
   // Person selection modal states
   const [isSelectPersonOpen, setIsSelectPersonOpen] = useState(false);
@@ -115,6 +126,26 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Completely stops and cleans up camera hardware tracks
+  const stopCamera = useCallback((turnOffActive: boolean = true) => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (_) {}
+      });
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    if (turnOffActive) {
+      setIsCameraActive(false);
+    }
+    setIsCameraReady(false);
+    setIsCameraStarting(false);
+  }, []);
+
   // Reset or initialize on open
   useEffect(() => {
     if (isOpen) {
@@ -128,62 +159,107 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         setOfficerDetails(`${currentUser.rank} ${currentUser.displayName}`);
       }
     } else {
-      stopCamera();
+      stopCamera(true);
     }
-  }, [isOpen, defaultHearingDate, currentUser]);
+  }, [isOpen, defaultHearingDate, currentUser, stopCamera]);
 
   // Clean up camera on unmount
   useEffect(() => {
     return () => {
-      stopCamera();
+      stopCamera(true);
     };
+  }, [stopCamera]);
+
+  // Callback ref ensuring video node connects to stream as soon as it mounts
+  const setVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && streamRef.current) {
+      if (node.srcObject !== streamRef.current) {
+        node.srcObject = streamRef.current;
+      }
+      node.play().catch((playErr) => {
+        console.warn('Video playback notice:', playErr);
+      });
+    }
   }, []);
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    setIsCameraActive(false);
-  };
-
-  // Start live camera feed
-  const handleStartCamera = async () => {
-    setCameraError(null);
-    try {
-      stopCamera();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 } },
-      });
-      streamRef.current = stream;
-      setIsCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
+  // Ensure stream connection whenever isCameraActive flips
+  useEffect(() => {
+    if (isCameraActive && streamRef.current && videoRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
       }
-    } catch (err: any) {
-      console.error('Camera access failed:', err);
-      setCameraError('Camera access unavailable or blocked. Please select an image from your gallery.');
+      videoRef.current.play().catch(() => {});
     }
+  }, [isCameraActive]);
+
+  // Launch dedicated full-screen camera modal
+  const handleOpenFullScreenCamera = () => {
+    stopCamera(true);
+    setScannerInitialImage(null);
+    setScannerInitialFileName(undefined);
+    setIsFullScreenScannerOpen(true);
   };
 
-  // Capture frame from camera
-  const handleCapturePhoto = () => {
-    if (!videoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 800;
-    canvas.height = videoRef.current.videoHeight || 600;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
-      const captureName = `Camera_Capture_${Date.now()}.jpg`;
-      
-      setCropMimeType('image/jpeg');
-      setCropFileName(captureName);
-      setCropImageSrc(dataUrl);
-      stopCamera();
+  // Launch mobile scanner directly in crop mode for uploaded gallery image
+  const handleSelectPhotoForScanner = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    stopCamera(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setScannerInitialImage(dataUrl);
+      setScannerInitialFileName(file.name || 'Summon_Upload.jpg');
+      setIsFullScreenScannerOpen(true);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Handler when DocumentCameraScanner completes (Camera/Upload -> Review -> Crop -> AI OCR)
+  const handleScannerComplete = (result: ScanResultData) => {
+    setIsFullScreenScannerOpen(false);
+    setScannerInitialImage(null);
+    setScannerInitialFileName(undefined);
+
+    setRawFile(result.croppedFile);
+    setAttachmentType('image');
+    setFileName(result.fileName);
+    setAttachmentPreview(result.croppedDataUrl);
+    setOriginalAttachmentPreview(result.originalDataUrl);
+    setViewingOriginalDoc(false);
+
+    const data = result.ocrResult.data;
+    const detected = new Set(data.detectedFields || []);
+    setDetectedFields(detected);
+
+    if (data.summonNumber) setSummonNumber(data.summonNumber);
+    if (data.caseNumber) setCaseNumber(data.caseNumber);
+    if (data.personName) setPersonName(data.personName);
+    if (data.fatherName) setFatherName(data.fatherName);
+    if (data.address) setAddress(data.address);
+    if (data.courtName) setCourtName(data.courtName);
+    if (data.courtAddress) setCourtAddress(data.courtAddress);
+    if (data.policeStation) setPoliceStation(data.policeStation);
+    if (data.district) setDistrict(data.district);
+    if (data.state) setState(data.state);
+    if (data.hearingDate) setHearingDate(data.hearingDate);
+    if (data.issuingAuthority) setIssuingAuthority(data.issuingAuthority);
+    if (data.offenseCharges) setOffenseCharges(data.offenseCharges);
+    if (data.urgency) setUrgency(data.urgency);
+
+    setOcrSuccess(result.ocrResult.success);
+    setOcrMessage(result.ocrResult.message ? sanitizeOcrNotice(result.ocrResult.message) : null);
+
+    if (result.ocrResult.success && detected.size > 0) {
+      showToast(`AI OCR extracted ${detected.size} judicial fields from document`, 'success', 'Scan Complete');
+    } else if (!result.ocrResult.success) {
+      showToast(sanitizeOcrNotice(result.ocrResult.message) || 'Please verify docket particulars below.', 'warning', 'OCR Notice');
     }
+
+    setCurrentStep('review');
   };
 
   // Gallery image selection
@@ -319,21 +395,9 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     }
   };
 
-  const stopQrCamera = () => {
-    if (qrAnimIdRef.current) {
-      cancelAnimationFrame(qrAnimIdRef.current);
-      qrAnimIdRef.current = null;
-    }
-    if (qrStreamRef.current) {
-      qrStreamRef.current.getTracks().forEach((t) => t.stop());
-      qrStreamRef.current = null;
-    }
-    setQrScanningLive(false);
-  };
-
-  // Process decoded QR code payload from camera, image, or text
+  // Process decoded QR code payload from camera, image, or manual text
   const handleDecodedQr = (rawQrData: string) => {
-    stopQrCamera();
+    stopCamera(true);
     const parsed = parseJudicialQRCode(rawQrData.trim());
     const detected = new Set<string>();
 
@@ -361,6 +425,22 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       setCourtName(parsed.courtName);
       detected.add('courtName');
     }
+    if (parsed.courtAddress) {
+      setCourtAddress(parsed.courtAddress);
+      detected.add('courtAddress');
+    }
+    if (parsed.policeStation) {
+      setPoliceStation(parsed.policeStation);
+      detected.add('policeStation');
+    }
+    if (parsed.district) {
+      setDistrict(parsed.district);
+      detected.add('district');
+    }
+    if (parsed.state) {
+      setState(parsed.state);
+      detected.add('state');
+    }
     if (parsed.hearingDate) {
       setHearingDate(parsed.hearingDate);
       detected.add('hearingDate');
@@ -371,101 +451,16 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     }
 
     setDetectedFields(detected);
-    setIsQrActive(false);
+    setIsQrModalOpen(false);
     setOcrSuccess(true);
     if (detected.size > 0) {
       setOcrMessage(`Successfully decoded ${detected.size} judicial parameters from e-Court QR code`);
-      showToast(`Decoded ${detected.size} fields from QR code`, 'success', 'QR Decoded');
+      showToast(`Decoded ${detected.size} fields from QR code!`, 'success', 'QR Decoded');
     } else {
       setOcrMessage(`Scanned QR data: ${rawQrData.substring(0, 60)}...`);
       showToast('QR code scanned. Please verify case fields.', 'info', 'QR Scanned');
     }
     setCurrentStep('review');
-  };
-
-  // Start QR camera scanner with live frame processing
-  const handleStartQrCamera = async () => {
-    setQrCameraError(null);
-    try {
-      stopQrCamera();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 } },
-      });
-      qrStreamRef.current = stream;
-      setQrScanningLive(true);
-      if (qrVideoRef.current) {
-        qrVideoRef.current.srcObject = stream;
-        await qrVideoRef.current.play();
-      }
-
-      // Continuous scanning loop
-      const scanFrame = () => {
-        if (qrVideoRef.current && qrVideoRef.current.readyState >= 2) {
-          const video = qrVideoRef.current;
-          const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth || 640;
-          canvas.height = video.videoHeight || 480;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imgData.data, imgData.width, imgData.height, {
-              inversionAttempts: 'attemptBoth',
-            });
-            if (code && code.data && code.data.trim().length > 0) {
-              handleDecodedQr(code.data);
-              return;
-            }
-          }
-        }
-        qrAnimIdRef.current = requestAnimationFrame(scanFrame);
-      };
-
-      qrAnimIdRef.current = requestAnimationFrame(scanFrame);
-    } catch (err: any) {
-      console.error('QR camera access error:', err);
-      setQrCameraError(
-        'Unable to access camera for live QR scanning. Please allow camera permissions or upload an image file.'
-      );
-      setQrScanningLive(false);
-    }
-  };
-
-  // Scan QR from image file
-  const handleQrImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imgData.data, imgData.width, imgData.height, {
-            inversionAttempts: 'attemptBoth',
-          });
-          if (code && code.data) {
-            handleDecodedQr(code.data);
-          } else {
-            showToast('No legible QR barcode found in this image. Please try another or scan live.', 'warning');
-          }
-        }
-      };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // Apply parsed QR code from text box
-  const handleApplyQr = () => {
-    if (!qrInput.trim()) return;
-    handleDecodedQr(qrInput.trim());
   };
 
   // Auto-populate fields when person is selected from directory
@@ -542,6 +537,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
           status,
           urgency,
           imageUrl: attachmentType === 'image' && attachmentPreview ? attachmentPreview : undefined,
+          originalImageUrl: attachmentType === 'image' && originalAttachmentPreview ? originalAttachmentPreview : undefined,
           pdfUrl: attachmentType === 'pdf' && attachmentPreview ? attachmentPreview : undefined,
           fileName: fileName || undefined,
           reminderEnabled: true,
@@ -565,10 +561,9 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   };
 
   const handleModalClose = React.useCallback(() => {
-    stopCamera();
-    stopQrCamera();
+    stopCamera(true);
     onClose();
-  }, [onClose]);
+  }, [onClose, stopCamera]);
 
   React.useEffect(() => {
     if (!isOpen) return;
@@ -591,15 +586,15 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
           handleModalClose();
         }
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto animate-fadeIn"
     >
-      <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-6 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col max-h-[92vh]">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-3xl my-6 overflow-hidden shadow-2xl animate-scaleIn flex flex-col max-h-[92vh]">
         {/* Modal Header & Step Indicator */}
-        <div className="bg-background-alt border-b border-border px-5 sm:px-6 py-4 sticky top-0 z-20 space-y-3">
+        <div className="bg-card border-b border-border px-5 sm:px-6 py-4 sticky top-0 z-20 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] dark:bg-primary-muted dark:text-primary-text dark:border-border-strong">
-                <FileText className="w-5 h-5" />
+              <div className="p-2.5 rounded-xl bg-muted text-foreground border border-border">
+                <FileText className="w-5 h-5 text-primary-text" />
               </div>
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-foreground tracking-tight">
@@ -616,30 +611,37 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               onClick={handleModalClose}
               id="close-add-modal-btn"
               aria-label="Close summon registration"
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+              className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
           {/* Workflow Stepper Bar */}
-          <div className="grid grid-cols-3 gap-2 pt-1">
+          <div className="grid grid-cols-3 gap-2 pt-1" role="tablist" aria-label="Workflow progress">
             <button
               type="button"
-              onClick={() => setCurrentStep('upload')}
-              className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
+              role="tab"
+              aria-selected={currentStep === 'upload'}
+              onClick={() => {
+                if (isCameraActive) stopCamera(true);
+                setCurrentStep('upload');
+              }}
+              className={`py-2 px-3 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 currentStep === 'upload'
-                  ? 'bg-primary-btn text-white shadow-sm'
-                  : 'bg-card text-muted-foreground border border-border'
+                  ? 'bg-primary-btn text-white shadow-sm ring-1 ring-primary-text/40'
+                  : 'bg-card text-muted-foreground border border-border hover:text-foreground hover:border-border-strong'
               }`}
             >
               <span>1. Ingest Document</span>
             </button>
 
             <div
-              className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
+              role="tab"
+              aria-selected={currentStep === 'processing'}
+              className={`py-2 px-3 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
                 currentStep === 'processing'
-                  ? 'bg-amber-500 text-white shadow-sm dark:bg-warning-muted dark:text-warning dark:border-warning'
+                  ? 'bg-amber-500/15 text-amber-500 border border-amber-500/40 shadow-sm animate-pulse'
                   : 'bg-card text-muted-foreground border border-border'
               }`}
             >
@@ -648,11 +650,16 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
             <button
               type="button"
-              onClick={() => setCurrentStep('review')}
-              className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all ${
+              role="tab"
+              aria-selected={currentStep === 'review'}
+              onClick={() => {
+                if (isCameraActive) stopCamera(true);
+                setCurrentStep('review');
+              }}
+              className={`py-2 px-3 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 currentStep === 'review'
-                  ? 'bg-primary-btn text-white shadow-sm'
-                  : 'bg-card text-muted-foreground border border-border'
+                  ? 'bg-primary-btn text-white shadow-sm ring-1 ring-primary-text/40'
+                  : 'bg-card text-muted-foreground border border-border hover:text-foreground hover:border-border-strong'
               }`}
             >
               <span>3. Review & Save</span>
@@ -665,83 +672,58 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
           {/* STEP 1: INGEST DOCUMENT & SOURCES */}
           {currentStep === 'upload' && (
             <div className="space-y-5">
-              <div className="text-center max-w-md mx-auto space-y-1">
-                <h3 className="text-sm font-bold text-foreground">Select Document Input Method</h3>
-                <p className="text-xs text-muted-foreground">
-                  Capture warrant photo, upload court PDF or scan judicial QR notice.
-                </p>
-              </div>
-
-              {/* Camera Live Feed Area */}
-              {isCameraActive ? (
-                <div className="bg-card border border-border-strong rounded-2xl p-4 space-y-3">
-                  <div className="relative aspect-video max-h-72 bg-black rounded-xl overflow-hidden flex items-center justify-center">
-                    <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
-                    <div className="absolute inset-4 border border-dashed border-primary-text/60 rounded-lg pointer-events-none" />
-                  </div>
-
-                  <div className="flex items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handleCapturePhoto}
-                      id="btn-capture-frame"
-                      className="px-6 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs flex items-center gap-2 shadow-lg cursor-pointer"
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>Capture & Run AI OCR</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={stopCamera}
-                      className="px-4 py-2.5 rounded-xl bg-muted hover:bg-border text-foreground text-xs font-medium cursor-pointer"
-                    >
-                      Cancel Camera
-                    </button>
-                  </div>
+              {/* Primary Ingestion Methods Grid - Select Source */}
+              <div className="space-y-3">
+                <div className="text-center max-w-md mx-auto py-1">
+                  <h3 className="text-sm sm:text-base font-bold text-foreground">
+                    Select Document Source
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Capture paper summon with camera or upload photo to begin AI extraction
+                  </p>
                 </div>
-              ) : (
-                /* Primary Ingestion Grid */
+
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {/* Camera */}
+                  {/* 1. Live Camera */}
                   <button
                     type="button"
-                    onClick={handleStartCamera}
+                    onClick={handleOpenFullScreenCamera}
                     id="btn-start-camera"
-                    className="flex flex-col items-center justify-center p-5 rounded-2xl border border-border bg-card hover:border-primary-text hover:bg-card-hover transition-all group cursor-pointer"
+                    aria-label="Open full-screen camera to capture paper warrant"
+                    className="min-h-[120px] flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/5 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all group cursor-pointer active:scale-[0.98] shadow-sm"
                   >
-                    <div className="p-3 rounded-xl bg-muted text-primary-text group-hover:scale-110 transition-transform mb-2">
+                    <div className="p-3.5 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform mb-2">
                       <Camera className="w-6 h-6" />
                     </div>
                     <span className="text-xs font-bold text-foreground">Live Camera</span>
-                    <span className="text-[10px] text-muted-foreground mt-0.5">Capture Paper Warrant</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 text-center">Full-Screen Scanner</span>
                   </button>
 
-                  {/* Gallery */}
+                  {/* 2. Gallery Photo Upload with Direct Mobile Crop & OCR */}
                   <label
                     htmlFor="upload-gallery-file"
                     id="btn-gallery-select"
-                    className="flex flex-col items-center justify-center p-5 rounded-2xl border border-border bg-card hover:border-primary-text hover:bg-card-hover transition-all group cursor-pointer"
+                    className="min-h-[120px] flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl border-2 border-primary-btn/30 bg-primary-btn/5 hover:border-primary-btn hover:bg-primary-btn/10 transition-all group cursor-pointer active:scale-[0.98] shadow-sm"
                   >
                     <input
                       id="upload-gallery-file"
                       type="file"
                       accept="image/*"
-                      onChange={handleImageUpload}
+                      onChange={handleSelectPhotoForScanner}
                       className="hidden"
                     />
-                    <div className="p-3 rounded-xl bg-muted text-primary-text group-hover:scale-110 transition-transform mb-2">
+                    <div className="p-3.5 rounded-xl bg-primary-btn/15 text-primary-text group-hover:scale-110 transition-transform mb-2">
                       <ImageIcon className="w-6 h-6" />
                     </div>
-                    <span className="text-xs font-bold text-foreground">Gallery Photo</span>
-                    <span className="text-[10px] text-muted-foreground mt-0.5">JPG / PNG / WEBP</span>
+                    <span className="text-xs font-bold text-foreground">Upload Photo</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 text-center">Preview & Crop → AI OCR</span>
                   </label>
 
-                  {/* PDF Upload */}
+                  {/* 3. PDF Upload */}
                   <label
                     htmlFor="upload-pdf-file"
                     id="btn-pdf-select"
-                    className="flex flex-col items-center justify-center p-5 rounded-2xl border border-border bg-card hover:border-primary-text hover:bg-card-hover transition-all group cursor-pointer"
+                    className="min-h-[120px] flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl border border-border bg-card hover:border-primary-text hover:bg-muted/30 transition-all group cursor-pointer active:scale-[0.98]"
                   >
                     <input
                       id="upload-pdf-file"
@@ -750,144 +732,41 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       onChange={handlePdfUpload}
                       className="hidden"
                     />
-                    <div className="p-3 rounded-xl bg-muted text-primary-text group-hover:scale-110 transition-transform mb-2">
+                    <div className="p-3.5 rounded-xl bg-muted text-muted-foreground group-hover:scale-110 transition-transform mb-2">
                       <FileText className="w-6 h-6" />
                     </div>
                     <span className="text-xs font-bold text-foreground">Court PDF</span>
-                    <span className="text-[10px] text-muted-foreground mt-0.5">Official e-Summon</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 text-center">Official e-Summon</span>
                   </label>
 
-                  {/* QR Code */}
+                  {/* 4. Judicial QR Code */}
                   <button
                     type="button"
-                    onClick={() => setIsQrActive(!isQrActive)}
+                    onClick={() => setIsQrModalOpen(true)}
                     id="btn-open-qr"
-                    className="flex flex-col items-center justify-center p-5 rounded-2xl border border-border bg-card hover:border-primary-text hover:bg-card-hover transition-all group cursor-pointer"
+                    aria-label="Scan judicial QR code with camera, photo upload, or CNR text"
+                    className="min-h-[120px] flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 hover:border-amber-500 hover:bg-amber-500/10 transition-all group cursor-pointer active:scale-[0.98] shadow-sm"
                   >
-                    <div className="p-3 rounded-xl bg-muted text-warning group-hover:scale-110 transition-transform mb-2">
+                    <div className="p-3.5 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform mb-2">
                       <QrCode className="w-6 h-6" />
                     </div>
                     <span className="text-xs font-bold text-foreground">Judicial QR</span>
-                    <span className="text-[10px] text-muted-foreground mt-0.5">e-Courts Barcode</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 text-center">e-Courts Barcode</span>
                   </button>
                 </div>
-              )}
+              </div>
 
-              {cameraError && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-900 dark:text-red-200 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                  <span>{cameraError}</span>
-                </div>
-              )}
-
-              {/* QR Scanner Drawer */}
-              {isQrActive && (
-                <div className="bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-5 space-y-4 shadow-sm animate-scaleIn">
-                  <div className="flex items-center justify-between pb-2 border-b border-border">
-                    <span className="text-xs font-bold text-foreground flex items-center gap-2">
-                      <QrCode className="w-4 h-4 text-warning" />
-                      Judicial QR & Barcode Scanner
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        stopQrCamera();
-                        setIsQrActive(false);
-                      }}
-                      className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-                    >
-                      Close Scanner
-                    </button>
-                  </div>
-
-                  {/* QR Scanning Mode Selector */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={qrScanningLive ? stopQrCamera : handleStartQrCamera}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        qrScanningLive
-                          ? 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/80 dark:border-red-800 dark:text-red-300'
-                          : 'bg-primary-btn text-white hover:bg-primary-hover shadow-sm'
-                      }`}
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>{qrScanningLive ? 'Stop Live Camera' : 'Scan via Live Camera'}</span>
-                    </button>
-
-                    <label
-                      htmlFor="qr-file-upload"
-                      className="px-3.5 py-2 rounded-xl bg-card hover:bg-[#EFF6FF] text-[#1E3A8A] dark:bg-muted dark:text-white border border-border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
-                    >
-                      <input
-                        id="qr-file-upload"
-                        type="file"
-                        accept="image/*"
-                        onChange={handleQrImageUpload}
-                        className="hidden"
-                      />
-                      <ImageIcon className="w-4 h-4 text-primary-text" />
-                      <span>Upload QR Image</span>
-                    </label>
-                  </div>
-
-                  {/* Live Video Viewfinder with targeting reticle */}
-                  {qrScanningLive && (
-                    <div className="relative rounded-xl overflow-hidden border-2 border-warning bg-black aspect-video max-h-56 mx-auto flex items-center justify-center">
-                      <video
-                        ref={qrVideoRef}
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover"
-                      />
-                      {/* Targeting overlay */}
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="w-36 h-36 border-2 border-warning rounded-xl relative">
-                          <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-white" />
-                          <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-white" />
-                          <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-white" />
-                          <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-white" />
-                          <div className="w-full h-0.5 bg-warning/80 absolute top-1/2 -translate-y-1/2 animate-bounce" />
-                        </div>
-                      </div>
-                      <div className="absolute bottom-2 left-0 right-0 text-center">
-                        <span className="px-2.5 py-1 rounded-full bg-black/70 text-[10px] font-mono text-warning">
-                          Point camera directly at Judicial QR code
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {qrCameraError && (
-                    <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-900 dark:text-red-200 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                      <span>{qrCameraError}</span>
-                    </div>
-                  )}
-
-                  {/* Manual Paste Fallback */}
-                  <div className="space-y-1.5 pt-1">
-                    <label className="text-[11px] font-medium text-muted-foreground block">
-                      Or paste raw e-Court CNR / QR payload text:
-                    </label>
-                    <textarea
-                      value={qrInput}
-                      onChange={(e) => setQrInput(e.target.value)}
-                      placeholder="e.g. CNR:DLCT010012342026; FIR:142/2026; Court:Tis Hazari; Accused:Sanjay Kumar; Date:2026-09-24"
-                      rows={2}
-                      className="w-full bg-background border border-border rounded-xl p-2.5 text-xs text-foreground font-mono placeholder-muted-foreground-alt focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all resize-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleApplyQr}
-                      disabled={!qrInput.trim()}
-                      className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
-                    >
-                      Decode & Populate Particulars
-                    </button>
-                  </div>
-                </div>
-              )}
+              {/* Secondary QR Launcher Link */}
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsQrModalOpen(true)}
+                  className="text-xs text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 flex items-center gap-1.5 cursor-pointer underline-offset-4 hover:underline"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Have an e-Courts QR screenshot or 16-digit CNR code? Scan or test here</span>
+                </button>
+              </div>
 
               {/* Attachment Preview (if already loaded) */}
               {attachmentPreview && (
@@ -948,7 +827,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
           {/* STEP 2: PROCESSING & AI TELEMETRY */}
           {currentStep === 'processing' && (
-            <div className="py-12 px-4 text-center space-y-4 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl">
+            <div className="py-12 px-4 text-center space-y-4 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-2xl">
               <div className="relative w-16 h-16 mx-auto">
                 <div className="w-16 h-16 rounded-2xl bg-background-alt border border-border-strong flex items-center justify-center">
                   <Sparkles className="w-8 h-8 text-warning animate-pulse" />
@@ -1033,8 +912,90 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                 </div>
               )}
 
+              {/* DOCUMENT EVIDENCE PREVIEW (Cropped & Original Photos) */}
+              {attachmentPreview && (
+                <div className="p-4 bg-card border border-border rounded-2xl space-y-3 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-1.5">
+                      <FileCheck className="w-4 h-4 text-emerald-500" />
+                      Scanned Summon Document Evidence
+                    </span>
+                    {originalAttachmentPreview && (
+                      <div className="flex items-center gap-1.5 bg-muted p-1 rounded-xl border border-border">
+                        <button
+                          type="button"
+                          onClick={() => setViewingOriginalDoc(false)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            !viewingOriginalDoc
+                              ? 'bg-card text-foreground shadow-sm font-bold border border-border'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Cropped (OCR)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setViewingOriginalDoc(true)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            viewingOriginalDoc
+                              ? 'bg-card text-foreground shadow-sm font-bold border border-border'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Original Photo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-neutral-950/40 p-3 rounded-xl border border-border">
+                    <div className="relative group max-h-48 max-w-full overflow-hidden rounded-lg border border-border shrink-0">
+                      <img
+                        src={viewingOriginalDoc && originalAttachmentPreview ? originalAttachmentPreview : attachmentPreview}
+                        alt="Summon evidence"
+                        className="max-h-44 object-contain rounded-lg shadow-sm"
+                      />
+                      <div className="absolute bottom-1 right-1 px-2 py-0.5 rounded bg-black/75 text-[10px] text-white/90 font-mono">
+                        {viewingOriginalDoc ? 'Original Photo' : 'Cropped for AI OCR'}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 text-xs text-muted-foreground flex-1">
+                      <div className="font-bold text-foreground truncate">{fileName || 'Document.jpg'}</div>
+                      <p className="text-[11px] leading-relaxed">
+                        {viewingOriginalDoc
+                          ? 'Original uncropped photograph preserved in docket records for official judicial reference.'
+                          : 'Cropped document image optimized and scanned by the AI legal docket engine.'}
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleOpenFullScreenCamera}
+                          className="px-3 py-1.5 rounded-lg bg-muted hover:bg-border text-foreground text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Camera className="w-3.5 h-3.5" /> Re-scan with Camera
+                        </button>
+                        {originalAttachmentPreview && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScannerInitialImage(originalAttachmentPreview);
+                              setScannerInitialFileName(fileName);
+                              setIsFullScreenScannerOpen(true);
+                            }}
+                            className="px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-xs font-medium text-primary-text flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Maximize2 className="w-3.5 h-3.5" /> Adjust Crop Box
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* SECTION A: WARRANT & CASE DETAILS */}
-              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <Shield className="w-3.5 h-3.5 text-warning" />
                   A. Warrant & Case Identifiers
@@ -1044,11 +1005,15 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Summon / Warrant Number *</span>
-                      {detectedFields.has('summonNumber') && (
+                      {detectedFields.has('summonNumber') ? (
                         <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
-                      )}
+                      ) : !summonNumber ? (
+                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                          Verify / Required
+                        </span>
+                      ) : null}
                     </label>
                     <input
                       type="text"
@@ -1056,8 +1021,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={summonNumber}
                       onChange={(e) => setSummonNumber(e.target.value)}
                       placeholder="e.g. SUM/2026/0892 or WAR-112"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
-                        detectedFields.has('summonNumber') ? 'border-emerald-500/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
+                        detectedFields.has('summonNumber')
+                          ? 'border-emerald-500/60'
+                          : !summonNumber
+                          ? 'border-amber-500/40 bg-amber-500/[0.03]'
+                          : 'border-border'
                       }`}
                       required
                     />
@@ -1066,11 +1035,15 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Case / FIR Number *</span>
-                      {detectedFields.has('caseNumber') && (
+                      {detectedFields.has('caseNumber') ? (
                         <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
-                      )}
+                      ) : !caseNumber ? (
+                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                          Verify / Required
+                        </span>
+                      ) : null}
                     </label>
                     <input
                       type="text"
@@ -1078,8 +1051,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={caseNumber}
                       onChange={(e) => setCaseNumber(e.target.value)}
                       placeholder="e.g. FIR No. 248/2025 PS Tis Hazari"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
-                        detectedFields.has('caseNumber') ? 'border-emerald-500/60' : 'border-border'
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
+                        detectedFields.has('caseNumber')
+                          ? 'border-emerald-500/60'
+                          : !caseNumber
+                          ? 'border-amber-500/40 bg-amber-500/[0.03]'
+                          : 'border-border'
                       }`}
                       required
                     />
@@ -1092,7 +1069,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <select
                       value={urgency}
                       onChange={(e) => setUrgency(e.target.value as SummonUrgency)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     >
                       <option value="Standard">Standard</option>
                       <option value="High">High Priority</option>
@@ -1105,7 +1082,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     <select
                       value={status}
                       onChange={(e) => setStatus(e.target.value as SummonStatus)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     >
                       <option value="Pending">Pending Service</option>
                       <option value="Upcoming">Upcoming Court</option>
@@ -1119,7 +1096,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       type="date"
                       value={issueDate}
                       onChange={(e) => setIssueDate(e.target.value)}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     />
                   </div>
 
@@ -1135,7 +1112,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       id="input-hearing-date"
                       value={hearingDate}
                       onChange={(e) => setHearingDate(e.target.value)}
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
                         detectedFields.has('hearingDate') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                       required
@@ -1145,7 +1122,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               </div>
 
               {/* SECTION B: RESPONDENT & SERVING ADDRESS */}
-              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                     <MapPin className="w-3.5 h-3.5 text-warning" />
@@ -1157,7 +1134,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       type="button"
                       onClick={() => setIsSelectPersonOpen(true)}
                       id="btn-select-someone"
-                      className="px-2.5 py-1 bg-card hover:bg-[#EFF6FF] text-[#1E3A8A] dark:bg-muted dark:text-white rounded-lg text-xs font-medium flex items-center gap-1.5 border border-border transition-colors cursor-pointer shadow-sm"
+                      className="px-2.5 py-1 bg-card hover:bg-muted text-foreground rounded-lg text-xs font-medium flex items-center gap-1.5 border border-border transition-colors cursor-pointer shadow-sm"
                     >
                       <UserCheck className="w-3.5 h-3.5 text-warning" />
                       <span>Select Someone</span>
@@ -1190,7 +1167,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={personName}
                       onChange={(e) => setPersonName(e.target.value)}
                       placeholder="e.g. Ramesh Chandra / Rajesh Gupta"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
                         detectedFields.has('personName') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                       required
@@ -1211,7 +1188,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={fatherName}
                       onChange={(e) => setFatherName(e.target.value)}
                       placeholder="e.g. Sh. Harish Chandra"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
                         detectedFields.has('fatherName') ? 'border-emerald-500/60' : 'border-border'
                       }`}
                     />
@@ -1233,7 +1210,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="House/Flat number, Street, Landmark, Village/Colony, Pincode for field officer delivery..."
                     rows={3}
-                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all ${
+                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
                       detectedFields.has('address') ? 'border-emerald-500/60' : 'border-border'
                     }`}
                     required
@@ -1242,7 +1219,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
               </div>
 
               {/* SECTION C: COURT & CHARGES */}
-              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <Building2 className="w-3.5 h-3.5 text-warning" />
                   C. Judicial Court & Offense Sections
@@ -1262,7 +1239,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtName}
                       onChange={(e) => setCourtName(e.target.value)}
                       placeholder="e.g. Chief Metropolitan Magistrate Court"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                       required
                     />
                   </div>
@@ -1276,7 +1253,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtAddress}
                       onChange={(e) => setCourtAddress(e.target.value)}
                       placeholder="e.g. Room No. 14, Tis Hazari Courts Complex, Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     />
                   </div>
                 </div>
@@ -1289,7 +1266,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={policeStation}
                       onChange={(e) => setPoliceStation(e.target.value)}
                       placeholder="e.g. PS Tis Hazari"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     />
                   </div>
 
@@ -1300,7 +1277,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={district}
                       onChange={(e) => setDistrict(e.target.value)}
                       placeholder="e.g. Central Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     />
                   </div>
 
@@ -1311,7 +1288,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={issuingAuthority}
                       onChange={(e) => setIssuingAuthority(e.target.value)}
                       placeholder="e.g. Judicial Magistrate 1st Class"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     />
                   </div>
                 </div>
@@ -1325,14 +1302,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     value={offenseCharges}
                     onChange={(e) => setOffenseCharges(e.target.value)}
                     placeholder="e.g. Under Section 138 NI Act / 420 IPC"
-                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/40 transition-all"
+                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                   />
                 </div>
               </div>
 
 
               {/* SECTION D: SUMMONS PHOTO (OPTIONAL) */}
-              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-[#60A5FA] transition-all duration-200 rounded-2xl p-4 sm:p-5">
+              <div className="space-y-3 bg-card border border-border shadow-sm hover:border-border-strong transition-all duration-200 rounded-2xl p-4 sm:p-5">
                 <span className="text-xs font-bold text-primary-text uppercase tracking-wider font-mono flex items-center gap-2">
                   <ImageIcon className="w-3.5 h-3.5 text-warning" />
                   D. Summons Photo (Optional)
@@ -1472,6 +1449,33 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
           onClose={() => setCropImageSrc(null)}
           imageSrc={cropImageSrc}
           onCropComplete={handleCropComplete}
+        />
+      )}
+
+      {/* Dedicated Mobile Full-Screen Camera Document Scanner: mounts ONLY when opened */}
+      {isFullScreenScannerOpen && (
+        <DocumentCameraScanner
+          isOpen={isFullScreenScannerOpen}
+          onClose={() => {
+            setIsFullScreenScannerOpen(false);
+            setScannerInitialImage(null);
+            setScannerInitialFileName(undefined);
+          }}
+          onScanComplete={handleScannerComplete}
+          initialImageSrc={scannerInitialImage}
+          initialFileName={scannerInitialFileName}
+        />
+      )}
+
+      {/* Dedicated Judicial QR & CNR Scanner Modal */}
+      {isQrModalOpen && (
+        <JudicialQrScannerModal
+          isOpen={isQrModalOpen}
+          onClose={() => setIsQrModalOpen(false)}
+          onScanSuccess={(payload) => {
+            setIsQrModalOpen(false);
+            handleDecodedQr(payload);
+          }}
         />
       )}
     </div>

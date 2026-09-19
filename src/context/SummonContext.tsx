@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Summon, MetricSummary, WitnessPerson } from '../types';
 import { useAuth } from './AuthContext';
-import { checkUpcomingReminders, requestNotificationPermission } from '../services/notificationService';
+import { requestPushPermissionAndSubscribe } from '../services/fcmService';
 
 interface SummonContextType {
   summons: Summon[];
@@ -48,7 +48,6 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (res.ok) {
         const data = await res.json();
         setSummons(data);
-        checkUpcomingReminders(data);
       }
     } catch (err) {
       console.error('Failed to fetch summons:', err);
@@ -291,7 +290,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const target = summons.find((s) => s.id === id);
     if (!target) return;
     if (!target.reminderEnabled) {
-      await requestNotificationPermission();
+      await requestPushPermissionAndSubscribe().catch(() => {});
     }
     await updateSummon(id, {
       reminderEnabled: !target.reminderEnabled,

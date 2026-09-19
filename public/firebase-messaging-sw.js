@@ -1,8 +1,12 @@
 // Summons Mitra - Firebase Cloud Messaging & Web Push Service Worker
 /* eslint-disable no-undef */
 
-importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
+try {
+  importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
+} catch (err) {
+  console.warn('[SW] Firebase compat scripts import failed or offline:', err);
+}
 
 // Parse query params passed during registration if any
 const urlParams = new URLSearchParams(self.location.search);
@@ -16,48 +20,53 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase App in service worker
-try {
-  firebase.initializeApp(firebaseConfig);
-} catch (e) {
-  // App may already exist
-}
-
 let messaging = null;
 try {
-  messaging = firebase.messaging();
+  if (typeof firebase !== 'undefined' && firebase.initializeApp) {
+    firebase.initializeApp(firebaseConfig);
+    messaging = firebase.messaging();
+  }
 } catch (e) {
-  console.warn('[SW] Firebase messaging init warning:', e);
+  // App or messaging might already be initialized
 }
 
 // 1. Handle FCM Background Messages
 if (messaging) {
   messaging.onBackgroundMessage((payload) => {
     console.info('[SW] FCM background message received:', payload);
-    const data = payload.data || {};
-    const notification = payload.notification || {};
     
-    const title = notification.title || data.title || 'Summons Mitra Alert';
-    const body = notification.body || data.body || data.message || 'Urgent court hearing update.';
+    // If the message already includes a notification payload, Firebase SDK automatically
+    // displays it. Calling showNotification would cause an unwanted duplicate.
+    if (payload.notification && payload.notification.title) {
+      console.info('[SW] Notification object provided; Firebase automatically renders notification.');
+      return;
+    }
+
+    const data = payload.data || {};
+    const title = data.title || 'Summons Mitra Alert';
+    const body = data.body || data.message || 'Urgent court hearing update.';
     const summonId = data.summonId || '';
-    const route = data.route || (summonId ? `/summons/${summonId}` : '/');
+    const route = data.route || (summonId ? `/?summonId=${summonId}` : '/');
+    const uniqueKey = data.uniqueKey || `summon-${summonId || Date.now()}`;
 
     const options = {
       body,
       icon: '/icons/icon-192.png',
       badge: '/icons/badge-72.png',
       vibrate: [200, 100, 200],
-      tag: data.uniqueKey || `summon-${summonId || Date.now()}`,
-      renotify: true,
+      tag: uniqueKey,
+      renotify: false,
       data: {
         summonId,
         route,
+        uniqueKey,
         type: data.type || 'HEARING_ALERT',
         url: route,
         receivedAt: Date.now(),
       },
     };
 
-    self.registration.showNotification(title, options);
+    return self.registration.showNotification(title, options);
   });
 }
 
@@ -72,8 +81,9 @@ self.addEventListener('push', (event) => {
     payload = { title: 'Summons Mitra Alert', body: event.data.text() };
   }
 
-  // If already handled by Firebase SDK internal receiver, skip duplicate
-  if (payload.from && payload.from.includes('firebase') && !payload.notification && !payload.data) {
+  // If this push payload is an FCM notification that Firebase compat SDK handles, skip manual showNotification
+  if (payload.notification && (payload.fcmMessageId || payload.from)) {
+    console.info('[SW] Push handled by Firebase Messaging SDK; skipping manual display.');
     return;
   }
 
@@ -82,18 +92,20 @@ self.addEventListener('push', (event) => {
   const title = notification.title || data.title || payload.title || 'Summons Mitra Alert';
   const body = notification.body || data.body || data.message || payload.body || 'Court hearing update.';
   const summonId = data.summonId || payload.summonId || '';
-  const route = data.route || payload.route || (summonId ? `/summons/${summonId}` : '/');
+  const route = data.route || payload.route || (summonId ? `/?summonId=${summonId}` : '/');
+  const uniqueKey = data.uniqueKey || payload.uniqueKey || `summon-${summonId || Date.now()}`;
 
   const options = {
     body,
     icon: '/icons/icon-192.png',
     badge: '/icons/badge-72.png',
     vibrate: [200, 100, 200],
-    tag: data.uniqueKey || payload.uniqueKey || `summon-${summonId || Date.now()}`,
-    renotify: true,
+    tag: uniqueKey,
+    renotify: false,
     data: {
       summonId,
       route,
+      uniqueKey,
       type: data.type || payload.type || 'HEARING_ALERT',
       url: route,
       receivedAt: Date.now(),
@@ -109,7 +121,7 @@ self.addEventListener('notificationclick', (event) => {
 
   const data = event.notification.data || {};
   const summonId = data.summonId || '';
-  const targetRoute = data.route || (summonId ? `/summons/${summonId}` : '/');
+  const targetRoute = data.route || (summonId ? `/?summonId=${summonId}` : '/');
   const targetUrl = new URL(targetRoute, self.location.origin).href;
 
   console.info('[SW] Notification clicked. Target route:', targetRoute, 'summonId:', summonId);

@@ -7,7 +7,6 @@ import {
   Calendar,
   ListFilter,
   FileText,
-  AlertTriangle,
   ArrowUpDown,
   Sparkles,
   Shield,
@@ -26,8 +25,6 @@ import { SummonDetailModal } from './components/SummonDetailModal';
 import { SplitScreenshotModal } from './components/SplitScreenshotModal';
 import { HearingCalendarView } from './components/HearingCalendarView';
 import { OfficerProfileModal } from './components/OfficerProfileModal';
-import { NotificationPanelModal } from './components/NotificationPanelModal';
-import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { AuthScreen } from './components/AuthScreen';
 import { WelcomeAnimation } from './components/WelcomeAnimation';
 import { WitnessDirectoryModal } from './components/WitnessDirectoryModal';
@@ -53,7 +50,6 @@ export function App() {
   const [selectedSummon, setSelectedSummon] = useState<Summon | null>(null);
   const [splitSummon, setSplitSummon] = useState<Summon | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isAlertsOpen, setIsAlertsOpen] = useState(false);
   const [isWitnessDirOpen, setIsWitnessDirOpen] = useState(false);
 
   // Special Mac-inspired Welcome animation state
@@ -155,7 +151,6 @@ export function App() {
           const match = summons.find((s) => s.id === sid || (s as any)._id === sid);
           if (match) {
             setSelectedSummon(match);
-            setIsAlertsOpen(false);
           } else if (currentUser) {
             try {
               const headers: Record<string, string> = {};
@@ -172,7 +167,6 @@ export function App() {
               if (res.ok) {
                 const data = await res.json();
                 setSelectedSummon(data);
-                setIsAlertsOpen(false);
               }
             } catch (err) {
               console.warn('[SW Notification Click] Failed to retrieve summon:', err);
@@ -302,16 +296,16 @@ export function App() {
       <motion.div variants={itemVariants} className="w-full relative z-30">
         <TopNavBar
           onOpenProfile={() => setIsProfileOpen(true)}
-          onOpenAlerts={() => setIsAlertsOpen(true)}
           onOpenWitnessDirectory={() => setIsWitnessDirOpen(true)}
+          onSelectSummon={(sid) => {
+            const s = summons.find(x => x.id === sid || (x as any)._id === sid);
+            if (s) setSelectedSummon(s);
+          }}
         />
       </motion.div>
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
-        {/* Soft Notification Permission Banner */}
-        <NotificationPermissionBanner />
-
         {/* Welcome & Command Header */}
         <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border rounded-2xl p-5 shadow-lg">
           <div className="space-y-1">
@@ -330,17 +324,6 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {unreadCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setIsAlertsOpen(true)}
-                className="px-3.5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 dark:bg-red-950/70 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/80 text-xs font-bold flex items-center gap-2 transition-colors animate-pulse cursor-pointer"
-              >
-                <AlertTriangle className="w-4 h-4" />
-                <span>{unreadCount} Court Hearing Alert(s)</span>
-              </button>
-            )}
-
             <button
               type="button"
               onClick={() => setIsWitnessDirOpen(true)}
@@ -382,6 +365,7 @@ export function App() {
         <motion.div variants={itemVariants} className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setActiveTab('docket')}
               id="tab-docket-list"
               className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 btn-premium transition-all ${
@@ -395,6 +379,7 @@ export function App() {
             </button>
 
             <button
+              type="button"
               onClick={() => setActiveTab('calendar')}
               id="tab-hearing-calendar"
               className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 btn-premium transition-all ${
@@ -411,9 +396,11 @@ export function App() {
           {activeTab === 'docket' && (
             <div className="flex items-center gap-2 text-xs">
               <button
+                type="button"
                 onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                className="p-2 rounded-lg bg-card border border-border hover:bg-card-hover text-foreground flex items-center gap-1 shadow-sm"
+                className="p-2 rounded-lg bg-card border border-border hover:bg-card-hover text-foreground flex items-center gap-1 shadow-sm cursor-pointer"
                 title={`Sort order: ${sortOrder.toUpperCase()}`}
+                aria-label={`Toggle sort order, currently ${sortOrder.toUpperCase()}`}
               >
                 <ArrowUpDown className="w-3.5 h-3.5 text-primary-text" />
                 <span className="text-[11px] font-mono">{sortOrder.toUpperCase()}</span>
@@ -422,6 +409,7 @@ export function App() {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
+                aria-label="Sort summons by"
                 className="bg-card border border-border text-foreground text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary-btn focus:ring-2 focus:ring-primary-btn/20 shadow-sm transition-all"
               >
                 <option value="hearingDate">Sort by Hearing Date</option>
@@ -448,8 +436,10 @@ export function App() {
                 />
                 {searchQuery && (
                   <button
+                    type="button"
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+                    aria-label="Clear search input"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
                   >
                     Clear
                   </button>
@@ -460,6 +450,7 @@ export function App() {
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
                 {(['All', 'Pending', 'Upcoming', 'Completed'] as const).map((status) => (
                   <button
+                    type="button"
                     key={status}
                     onClick={() => setStatusFilter(status)}
                     className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
@@ -493,12 +484,13 @@ export function App() {
                   </p>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     setDefaultHearingDate(undefined);
                     setIsAddModalOpen(true);
                   }}
                   id="btn-add-first-summon"
-                  className="px-5 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs inline-flex items-center gap-2 shadow-lg transition-colors"
+                  className="px-5 py-2.5 rounded-xl bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs inline-flex items-center gap-2 shadow-lg transition-colors cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4 text-warning" />
                   <span>Scan or Add New Summon</span>
@@ -553,17 +545,7 @@ export function App() {
       {/* 4. Officer Profile & Telemetry Modal */}
       <OfficerProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
 
-      {/* 5. Urgent Hearing Alerts Drawer / Modal */}
-      <NotificationPanelModal
-        isOpen={isAlertsOpen}
-        onClose={() => setIsAlertsOpen(false)}
-        onSelectSummon={(sid) => {
-          const s = summons.find(x => x.id === sid);
-          if (s) setSelectedSummon(s);
-        }}
-      />
-
-      {/* 6. Witness & People Police Directory Modal */}
+      {/* 5. Witness & People Police Directory Modal */}
       <WitnessDirectoryModal
         isOpen={isWitnessDirOpen}
         onClose={() => setIsWitnessDirOpen(false)}

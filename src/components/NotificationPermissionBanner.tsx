@@ -73,12 +73,12 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
   return (
     <div
       id="push-permission-banner"
-      className="bg-card border border-primary/30 rounded-xl p-4 shadow-md transition-all duration-200 mb-5 relative overflow-hidden"
+      className="bg-card border border-border rounded-xl p-4 shadow-md transition-all duration-200 mb-5 relative overflow-hidden"
     >
-      <div className="absolute top-0 left-0 bottom-0 w-1 bg-primary" />
+      <div className="absolute top-0 left-0 bottom-0 w-1 bg-primary-btn" />
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary flex-shrink-0 mt-0.5">
+          <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary-text flex-shrink-0 mt-0.5">
             <Bell className="w-5 h-5 animate-bounce" />
           </div>
           <div className="space-y-0.5">
@@ -86,7 +86,7 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
               <span className="text-sm font-bold text-foreground">
                 Stay updated on judicial hearings
               </span>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-primary/15 text-primary font-semibold">
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary-text font-semibold">
                 Device Push
               </span>
             </div>
@@ -117,7 +117,7 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
                 onClick={handleEnable}
                 disabled={isLoading}
                 id="enable-push-notifications-btn"
-                className="text-xs px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 font-semibold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                className="text-xs px-4 py-2 rounded-lg bg-primary-btn text-white hover:bg-primary-hover font-semibold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 {isLoading ? 'Enabling...' : 'Enable Notifications'}
