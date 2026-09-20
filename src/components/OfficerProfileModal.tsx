@@ -11,10 +11,12 @@ import {
   MapPin,
   Mail,
   Camera,
+  Star,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSummons } from '../context/SummonContext';
 import { ImageCropperModal } from './ImageCropperModal';
+import { ReviewAppModal } from './ReviewAppModal';
 
 interface OfficerProfileModalProps {
   isOpen: boolean;
@@ -39,6 +41,8 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -100,10 +104,11 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setAvatarError(null);
     
     // Check file size (e.g. max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      alert("Image is too large. Please select an image under 5MB.");
+      setAvatarError("Image is too large. Please select an image under 5MB.");
       return;
     }
 
@@ -117,12 +122,13 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
   const handleCropComplete = (croppedBlob: Blob) => {
     setCropImageSrc(null);
+    setAvatarError(null);
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = reader.result as string;
       setPhotoURL(base64);
       updateOfficerProfile({ photoURL: base64 }).catch(err => {
-        alert("Failed to save profile picture: " + err.message);
+        setAvatarError("Failed to save profile picture: " + err.message);
       });
     };
     reader.readAsDataURL(croppedBlob);
@@ -209,6 +215,19 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
               </p>
             </div>
           </div>
+
+          {avatarError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-500 flex items-center justify-between">
+              <span>{avatarError}</span>
+              <button
+                type="button"
+                onClick={() => setAvatarError(null)}
+                className="text-muted-foreground hover:text-foreground text-xs ml-2 cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {/* System Telemetry & Isolation */}
           <div className="p-3.5 bg-background-alt border border-border rounded-xl text-xs space-y-2">
@@ -304,6 +323,31 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </div>
           </form>
 
+          {/* App Rating & Feedback Section */}
+          <div className="border-t border-border pt-4">
+            <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                  <span className="text-xs font-bold text-foreground">Officer App Feedback</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground font-mono">v1.0.0</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Rate your field experience with Summons Mitra or submit operational suggestions to judicial engineering.
+              </p>
+              <button
+                type="button"
+                id="review-my-app-btn"
+                onClick={() => setIsReviewModalOpen(true)}
+                className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
+              >
+                <Star className="w-3.5 h-3.5 fill-white" />
+                Review My App
+              </button>
+            </div>
+          </div>
+
           {/* Logout Button */}
           <div className="border-t border-border pt-4">
             <button
@@ -331,6 +375,13 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
           imageSrc={cropImageSrc}
           onCropComplete={handleCropComplete}
           aspectRatio={1} // Square for profile
+        />
+      )}
+
+      {isReviewModalOpen && (
+        <ReviewAppModal
+          isOpen={isReviewModalOpen}
+          onClose={() => setIsReviewModalOpen(false)}
         />
       )}
     </div>

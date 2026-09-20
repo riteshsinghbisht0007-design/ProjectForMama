@@ -324,11 +324,21 @@ export const scanSummonDocument = async (
       } else if (data && data.rawText) {
         // If raw text was returned
         const parsed = parseSummonTextStrict(data.rawText);
+        const hasDetected = (parsed.detectedFields?.length || 0) > 0;
         return {
-          success: true,
-          isAutofilled: (parsed.detectedFields?.length || 0) > 0,
-          message: 'Extracted particulars from document text analysis.',
+          success: hasDetected,
+          isAutofilled: hasDetected,
+          message: hasDetected
+            ? 'Extracted particulars from document text analysis.'
+            : "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
           data: parsed,
+        };
+      } else {
+        return {
+          success: false,
+          isAutofilled: false,
+          message: "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
+          data: parseSummonTextStrict(''),
         };
       }
     } else {
@@ -396,7 +406,7 @@ export const scanSummonDocument = async (
   return {
     success: false,
     isAutofilled: false,
-    message: 'Could not detect legible legal text in the uploaded document. Please fill in fields manually.',
+    message: "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
     data: parseSummonTextStrict(''),
   };
 };

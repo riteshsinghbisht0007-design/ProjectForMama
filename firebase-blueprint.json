@@ -1,0 +1,135 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Officer user profile in Summons Mitra system",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "badgeNumber": { "type": "string" },
+        "rank": { "type": "string" },
+        "policeStation": { "type": "string" },
+        "district": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "upcomingAlertDays": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "Summon": {
+      "title": "Summon",
+      "description": "Official judicial court summon or legal warrant document record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "summonNumber": { "type": "string" },
+        "caseNumber": { "type": "string" },
+        "personName": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "address": { "type": "string" },
+        "courtName": { "type": "string" },
+        "courtAddress": { "type": "string" },
+        "policeStation": { "type": "string" },
+        "district": { "type": "string" },
+        "state": { "type": "string" },
+        "issueDate": { "type": "string" },
+        "hearingDate": { "type": "string" },
+        "issuingAuthority": { "type": "string" },
+        "officerDetails": { "type": "string" },
+        "offenseCharges": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Upcoming", "Completed", "Served", "Overdue"]
+        },
+        "urgency": {
+          "type": "string",
+          "enum": ["Standard", "High", "Urgent"]
+        },
+        "imageUrl": { "type": "string" },
+        "originalImageUrl": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "reminderEnabled": { "type": "boolean" },
+        "servedNotes": { "type": "string" },
+        "servedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": [
+        "userId",
+        "summonNumber",
+        "caseNumber",
+        "personName",
+        "address",
+        "courtName",
+        "hearingDate"
+      ]
+    },
+    "WitnessPerson": {
+      "title": "WitnessPerson",
+      "description": "Registered witness or person record in police directory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["Witness", "Respondent", "Accused", "Complainant", "Surety", "Other"]
+        },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "policeStation": { "type": "string" },
+        "district": { "type": "string" },
+        "state": { "type": "string" },
+        "idProofType": { "type": "string" },
+        "idProofNumber": { "type": "string" },
+        "summonCaseNo": { "type": "string" },
+        "statementSummary": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "name", "role", "address"]
+    },
+    "AppReview": {
+      "title": "AppReview",
+      "description": "Officer review and feedback for Summons Mitra app",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "officerName": { "type": "string" },
+        "badgeNumber": { "type": "string" },
+        "rank": { "type": "string" },
+        "rating": { "type": "number" },
+        "feedback": { "type": "string" },
+        "appVersion": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "rating", "feedback"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Officer profiles and user telemetry"
+    },
+    "/summons/{summonId}": {
+      "schema": { "$ref": "#/entities/Summon" },
+      "description": "Judicial summons and warrants tracked by the officer"
+    },
+    "/witnesses/{witnessId}": {
+      "schema": { "$ref": "#/entities/WitnessPerson" },
+      "description": "Witnesses, respondents, and persons directory"
+    },
+    "/reviews/{userId}": {
+      "schema": { "$ref": "#/entities/AppReview" },
+      "description": "Officer app ratings and feedback submissions"
+    }
+  }
+}

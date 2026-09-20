@@ -623,7 +623,7 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
           detectedFields: [],
         },
         success: false,
-        message: err?.message || 'Document scan could not complete. Please enter details manually.',
+        message: "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
         isAutofilled: false,
       };
 

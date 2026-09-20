@@ -28,6 +28,7 @@ import { OfficerProfileModal } from './components/OfficerProfileModal';
 import { AuthScreen } from './components/AuthScreen';
 import { WelcomeAnimation } from './components/WelcomeAnimation';
 import { WitnessDirectoryModal } from './components/WitnessDirectoryModal';
+import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { registerPushServiceWorker } from './services/fcmService';
 import { auth } from './services/firebase';
 
@@ -348,6 +349,11 @@ export function App() {
               <span>Add Summon</span>
             </button>
           </div>
+        </motion.div>
+
+        {/* Push Notification Permission Activation Banner */}
+        <motion.div variants={itemVariants}>
+          <NotificationPermissionBanner />
         </motion.div>
 
         {/* Dynamic Metric Statistics Grid */}

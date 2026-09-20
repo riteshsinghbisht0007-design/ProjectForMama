@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
 import { createInMemoryDatabase } from './mockDb';
+import { createCaseRoutes } from './server/routes/caseRoutes';
 
 // Load environment variables from .env and .env.local if present
 for (const envFile of ['.env', '.env.local']) {
@@ -829,6 +830,62 @@ async function startServer() {
     }
   });
 
+  // --- Officer App Reviews Endpoints ---
+  app.get('/api/reviews/mine', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const review = await db.collection('reviews').findOne({ userId: req.user.uid });
+      res.json({ review: review || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/reviews', requireAuth, async (req: any, res: any) => {
+    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const { rating, feedback, officerName, badgeNumber, rank } = req.body;
+      const numRating = Number(rating);
+
+      if (!numRating || numRating < 1 || numRating > 5) {
+        return res.status(400).json({ error: 'Rating must be a whole number between 1 and 5 stars.' });
+      }
+
+      if (!feedback || typeof feedback !== 'string' || feedback.trim().length < 3) {
+        return res.status(400).json({ error: 'Please enter at least 3 characters of constructive feedback.' });
+      }
+
+      const reviewData = {
+        userId: req.user.uid,
+        rating: Math.round(numRating),
+        feedback: feedback.trim(),
+        officerName: officerName || '',
+        badgeNumber: badgeNumber || '',
+        rank: rank || '',
+        appVersion: '1.0.0',
+        updatedAt: new Date(),
+      };
+
+      await db.collection('reviews').updateOne(
+        { userId: req.user.uid },
+        {
+          $set: reviewData,
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      console.info(`[App Review] Officer ${req.user.uid} submitted ${numRating}-star app review`);
+      res.status(200).json({ success: true, message: 'Review saved successfully!', review: reviewData });
+    } catch (err: any) {
+      console.error('[App Review] Failed to save review:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Judicial QR & e-Courts Barcode Lookup routes
+  app.use('/api/cases', createCaseRoutes(() => db));
+
   // 2. OCR Service Health Check (Safe: reports configuration without leaking key)
   app.get('/api/ocr/health', (_req, res) => {
     const key = getGeminiApiKey();
@@ -837,8 +894,8 @@ async function startServer() {
       status: 'ok',
       service: 'judicial-ocr',
       ocrAvailable: isConfigured,
-      primaryModel: 'gemini-3.1-flash-lite',
-      fallbackModels: ['gemini-3.6-flash', 'gemini-3.8-flash'],
+      primaryModel: 'gemini-3.8-flash',
+      fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest'],
       configured: isConfigured,
       timestamp: new Date().toISOString(),
     });
@@ -926,11 +983,11 @@ Analyze this court summon or warrant document image or PDF and extract all factu
 }
 IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegible in the document, set it to an empty string "". Never invent fictional names or addresses.`;
 
-      // High-availability candidate models: flash-lite has highest throughput & lowest latency, followed by 3.6-flash and 3.8-flash
+      // High-availability candidate models per Gemini SDK specification
       const candidateModels = [
-        'gemini-3.1-flash-lite',
-        'gemini-3.6-flash',
         'gemini-3.8-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-flash-latest',
       ];
       let response: any = null;
       let lastModelError: any = null;

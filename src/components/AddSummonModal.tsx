@@ -36,6 +36,7 @@ import { SelectPersonModal } from './SelectPersonModal';
 import { ImageCropperModal } from './ImageCropperModal';
 import { DocumentCameraScanner, ScanResultData } from './DocumentCameraScanner';
 import { JudicialQrScannerModal } from './JudicialQrScannerModal';
+import { NormalizedCaseData } from '../utils/judicialQrClient';
 
 interface AddSummonModalProps {
   isOpen: boolean;
@@ -73,6 +74,16 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
   // Dedicated Judicial QR modal state
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
+  const [selectedSource, setSelectedSource] = useState<'camera' | 'upload' | 'pdf' | 'judicial-qr' | null>(null);
+
+  // e-Courts QR import metadata
+  const [importedFromECourts, setImportedFromECourts] = useState<boolean>(false);
+  const [importedFields, setImportedFields] = useState<Set<string>>(new Set());
+  const [eCourtsImportMeta, setECourtsImportMeta] = useState<{
+    source: string;
+    verifiedAt: string;
+    cnrNumber?: string;
+  } | null>(null);
 
   // Fallback camera states
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
@@ -463,6 +474,98 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     setCurrentStep('review');
   };
 
+  // Apply verified e-Courts case data from dedicated Judicial QR Scanner
+  const handleApplyCaseDetails = (caseData: NormalizedCaseData, rawPayload: string) => {
+    setIsQrModalOpen(false);
+    stopCamera(true);
+
+    const imported = new Set<string>();
+
+    const applySafe = (currentVal: string, newVal: string, setter: (val: string) => void, key: string) => {
+      if (newVal && newVal.trim()) {
+        setter(newVal.trim());
+        imported.add(key);
+      }
+    };
+
+    // 1. CNR / Summon Identifier
+    const cnrVal = caseData.cnrNumber || (rawPayload && rawPayload.length >= 16 ? rawPayload.trim() : '');
+    if (cnrVal) {
+      applySafe(summonNumber, cnrVal, setSummonNumber, 'summonNumber');
+    }
+
+    // 2. Case Number
+    if (caseData.caseNumber) {
+      applySafe(caseNumber, caseData.caseNumber, setCaseNumber, 'caseNumber');
+    }
+
+    // 3. Court Name
+    if (caseData.courtName) {
+      applySafe(courtName, caseData.courtName, setCourtName, 'courtName');
+    }
+
+    // 4. Court Address / Complex / Room
+    if (caseData.courtNumber) {
+      applySafe(courtAddress, caseData.courtNumber, setCourtAddress, 'courtAddress');
+    }
+
+    // 5. District
+    if (caseData.district) {
+      applySafe(district, caseData.district, setDistrict, 'district');
+    }
+
+    // 6. State
+    if (caseData.state) {
+      applySafe(state, caseData.state, setState, 'state');
+    }
+
+    // 7. Police Station
+    if (caseData.policeStation) {
+      applySafe(policeStation, caseData.policeStation, setPoliceStation, 'policeStation');
+    }
+
+    // 8. Hearing Date
+    if (caseData.nextHearingDate) {
+      applySafe(hearingDate, caseData.nextHearingDate, setHearingDate, 'hearingDate');
+    }
+
+    // 9. Respondent (Person Name)
+    if (caseData.respondent && caseData.respondent.length > 0) {
+      applySafe(personName, caseData.respondent[0], setPersonName, 'personName');
+    }
+
+    // 10. Petitioner / Issuing Authority
+    if (caseData.petitioner && caseData.petitioner.length > 0) {
+      if (!issuingAuthority) {
+        setIssuingAuthority(caseData.petitioner.join(', '));
+        imported.add('issuingAuthority');
+      }
+    }
+
+    // 11. Sections / Acts
+    if (caseData.sections && caseData.sections.length > 0) {
+      const secStr = caseData.sections.join(', ') + (caseData.acts && caseData.acts.length > 0 ? ` (${caseData.acts.join(', ')})` : '');
+      applySafe(offenseCharges, secStr, setOffenseCharges, 'offenseCharges');
+    }
+
+    setImportedFromECourts(true);
+    setImportedFields(imported);
+    setDetectedFields(imported);
+    setECourtsImportMeta({
+      source: 'e-Courts / Judicial QR',
+      verifiedAt: new Date().toLocaleString('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }),
+      cnrNumber: caseData.cnrNumber || rawPayload,
+    });
+
+    setOcrSuccess(true);
+    setOcrMessage(`Case docket imported successfully from e-Courts (${caseData.cnrNumber || caseData.caseNumber || 'CNR Verified'})`);
+    showToast('Case details imported successfully from e-Courts!', 'success', 'Case Found');
+    setCurrentStep('review');
+  };
+
   // Auto-populate fields when person is selected from directory
   const handlePersonSelected = (person: WitnessPerson) => {
     setPersonName(person.name);
@@ -742,11 +845,23 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   {/* 4. Judicial QR Code */}
                   <button
                     type="button"
-                    onClick={() => setIsQrModalOpen(true)}
+                    onClick={() => {
+                      setSelectedSource('judicial-qr');
+                      setIsQrModalOpen(true);
+                    }}
                     id="btn-open-qr"
                     aria-label="Scan judicial QR code with camera, photo upload, or CNR text"
-                    className="min-h-[120px] flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 hover:border-amber-500 hover:bg-amber-500/10 transition-all group cursor-pointer active:scale-[0.98] shadow-sm"
+                    className={`min-h-[120px] flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl border-2 transition-all group cursor-pointer active:scale-[0.98] shadow-sm relative ${
+                      selectedSource === 'judicial-qr'
+                        ? 'border-amber-500 bg-amber-500/15 ring-2 ring-amber-500/50 shadow-md'
+                        : 'border-amber-500/30 bg-amber-500/5 hover:border-amber-500 hover:bg-amber-500/10'
+                    }`}
                   >
+                    {selectedSource === 'judicial-qr' && (
+                      <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500 text-black uppercase font-mono tracking-wider shadow-sm">
+                        Selected
+                      </span>
+                    )}
                     <div className="p-3.5 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform mb-2">
                       <QrCode className="w-6 h-6" />
                     </div>
@@ -850,6 +965,53 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
           {/* STEP 3: REVIEW & EDIT FORM */}
           {currentStep === 'review' && (
             <form onSubmit={handleSaveSummon} className="space-y-6">
+              {/* e-Courts QR Import Banner */}
+              {importedFromECourts && eCourtsImportMeta && (
+                <div
+                  id="ecourts-imported-banner"
+                  className="p-4 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/40 text-emerald-950 dark:text-emerald-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-emerald-950 dark:text-emerald-200">
+                          ✓ Case information imported successfully
+                        </h4>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-600/20 text-emerald-900 dark:text-emerald-300 border border-emerald-500/40 font-bold">
+                          e-Courts
+                        </span>
+                      </div>
+                      <p className="text-xs text-emerald-900/90 dark:text-emerald-300/90">
+                        <span className="font-semibold">Source:</span> {eCourtsImportMeta.source} &nbsp;•&nbsp;{' '}
+                        <span className="font-semibold">Last verified:</span> {eCourtsImportMeta.verifiedAt}
+                      </p>
+                      {eCourtsImportMeta.cnrNumber && (
+                        <p className="text-[11px] font-mono text-emerald-800 dark:text-emerald-400">
+                          CNR: {eCourtsImportMeta.cnrNumber}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSource('judicial-qr');
+                        setIsQrModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-950 dark:text-emerald-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Re-scan QR</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Status & Autofill Banner */}
               {ocrMessage && (
                 <div
@@ -1004,8 +1166,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Summon / Warrant Number *</span>
-                      {detectedFields.has('summonNumber') ? (
+                      <span>Summon / Warrant / CNR *</span>
+                      {importedFromECourts && importedFields.has('summonNumber') ? (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          Imported from e-Courts
+                        </span>
+                      ) : detectedFields.has('summonNumber') ? (
                         <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
@@ -1020,9 +1187,11 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       id="input-summon-number"
                       value={summonNumber}
                       onChange={(e) => setSummonNumber(e.target.value)}
-                      placeholder="e.g. SUM/2026/0892 or WAR-112"
+                      placeholder="e.g. SUM/2026/0892 or CNR Number"
                       className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        detectedFields.has('summonNumber')
+                        importedFromECourts && importedFields.has('summonNumber')
+                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                          : detectedFields.has('summonNumber')
                           ? 'border-emerald-500/60'
                           : !summonNumber
                           ? 'border-amber-500/40 bg-amber-500/[0.03]'
@@ -1035,7 +1204,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Case / FIR Number *</span>
-                      {detectedFields.has('caseNumber') ? (
+                      {importedFromECourts && importedFields.has('caseNumber') ? (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          Imported from e-Courts
+                        </span>
+                      ) : detectedFields.has('caseNumber') ? (
                         <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
@@ -1052,7 +1226,9 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       onChange={(e) => setCaseNumber(e.target.value)}
                       placeholder="e.g. FIR No. 248/2025 PS Tis Hazari"
                       className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        detectedFields.has('caseNumber')
+                        importedFromECourts && importedFields.has('caseNumber')
+                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                          : detectedFields.has('caseNumber')
                           ? 'border-emerald-500/60'
                           : !caseNumber
                           ? 'border-amber-500/40 bg-amber-500/[0.03]'
@@ -1103,9 +1279,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Hearing Date *</span>
-                      {detectedFields.has('hearingDate') && (
+                      {importedFromECourts && importedFields.has('hearingDate') ? (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                          e-Courts
+                        </span>
+                      ) : detectedFields.has('hearingDate') ? (
                         <span className="text-[10px] font-mono text-emerald-800 dark:text-emerald-400">AI</span>
-                      )}
+                      ) : null}
                     </label>
                     <input
                       type="date"
@@ -1113,7 +1293,11 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={hearingDate}
                       onChange={(e) => setHearingDate(e.target.value)}
                       className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        detectedFields.has('hearingDate') ? 'border-emerald-500/60' : 'border-border'
+                        importedFromECourts && importedFields.has('hearingDate')
+                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                          : detectedFields.has('hearingDate')
+                          ? 'border-emerald-500/60'
+                          : 'border-border'
                       }`}
                       required
                     />
@@ -1155,11 +1339,16 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Respondent / Accused Full Name *</span>
-                      {detectedFields.has('personName') && (
+                      {importedFromECourts && importedFields.has('personName') ? (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          Imported from e-Courts
+                        </span>
+                      ) : detectedFields.has('personName') ? (
                         <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
                           AI Autofilled
                         </span>
-                      )}
+                      ) : null}
                     </label>
                     <input
                       type="text"
@@ -1168,7 +1357,11 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       onChange={(e) => setPersonName(e.target.value)}
                       placeholder="e.g. Ramesh Chandra / Rajesh Gupta"
                       className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        detectedFields.has('personName') ? 'border-emerald-500/60' : 'border-border'
+                        importedFromECourts && importedFields.has('personName')
+                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                          : detectedFields.has('personName')
+                          ? 'border-emerald-500/60'
+                          : 'border-border'
                       }`}
                       required
                     />
@@ -1229,9 +1422,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   <div>
                     <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
                       <span>Court / Bench Name *</span>
-                      {detectedFields.has('courtName') && (
+                      {importedFromECourts && importedFields.has('courtName') ? (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          Imported from e-Courts
+                        </span>
+                      ) : detectedFields.has('courtName') ? (
                         <span className="text-[10px] font-mono text-emerald-800 dark:text-emerald-400">AI</span>
-                      )}
+                      ) : null}
                     </label>
                     <input
                       type="text"
@@ -1239,28 +1437,48 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       value={courtName}
                       onChange={(e) => setCourtName(e.target.value)}
                       placeholder="e.g. Chief Metropolitan Magistrate Court"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
+                        importedFromECourts && importedFields.has('courtName')
+                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                          : 'border-border'
+                      }`}
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">
-                      Court Room / Complex Location
+                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
+                      <span>Court Room / Complex Location</span>
+                      {importedFromECourts && importedFields.has('courtAddress') && (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                          e-Courts
+                        </span>
+                      )}
                     </label>
                     <input
                       type="text"
                       value={courtAddress}
                       onChange={(e) => setCourtAddress(e.target.value)}
                       placeholder="e.g. Room No. 14, Tis Hazari Courts Complex, Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
+                        importedFromECourts && importedFields.has('courtAddress')
+                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                          : 'border-border'
+                      }`}
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Police Station Jurisdiction</label>
+                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
+                      <span>Police Station</span>
+                      {importedFromECourts && importedFields.has('policeStation') && (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                          e-Courts
+                        </span>
+                      )}
+                    </label>
                     <input
                       type="text"
                       value={policeStation}
@@ -1271,7 +1489,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">District</label>
+                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
+                      <span>District</span>
+                      {importedFromECourts && importedFields.has('district') && (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                          e-Courts
+                        </span>
+                      )}
+                    </label>
                     <input
                       type="text"
                       value={district}
@@ -1282,7 +1507,32 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Issuing Authority</label>
+                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
+                      <span>State</span>
+                      {importedFromECourts && importedFields.has('state') && (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                          e-Courts
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type="text"
+                      value={state}
+                      onChange={(e) => setState(e.target.value)}
+                      placeholder="e.g. Delhi NCT"
+                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
+                      <span>Issuing Authority</span>
+                      {importedFromECourts && importedFields.has('issuingAuthority') && (
+                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                          e-Courts
+                        </span>
+                      )}
+                    </label>
                     <input
                       type="text"
                       value={issuingAuthority}
@@ -1294,15 +1544,24 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">
-                    Offense / Legal Sections (IPC / BNS / NI Act)
+                  <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
+                    <span>Offense / Legal Sections (IPC / BNS / NI Act)</span>
+                    {importedFromECourts && importedFields.has('offenseCharges') && (
+                      <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
+                        e-Courts
+                      </span>
+                    )}
                   </label>
                   <input
                     type="text"
                     value={offenseCharges}
                     onChange={(e) => setOffenseCharges(e.target.value)}
                     placeholder="e.g. Under Section 138 NI Act / 420 IPC"
-                    className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                    className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
+                      importedFromECourts && importedFields.has('offenseCharges')
+                        ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
+                        : 'border-border'
+                    }`}
                   />
                 </div>
               </div>
@@ -1416,7 +1675,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                     ) : (
                       <>
                         <Check className="w-4 h-4" />
-                        <span>Save Summons</span>
+                        <span>{importedFromECourts ? 'Save Case' : 'Save Summons'}</span>
                       </>
                     )}
                   </button>
@@ -1472,9 +1731,16 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         <JudicialQrScannerModal
           isOpen={isQrModalOpen}
           onClose={() => setIsQrModalOpen(false)}
+          onUseCaseDetails={(caseData, rawPayload) => {
+            handleApplyCaseDetails(caseData, rawPayload);
+          }}
           onScanSuccess={(payload) => {
             setIsQrModalOpen(false);
             handleDecodedQr(payload);
+          }}
+          onManualEntryFallback={() => {
+            setIsQrModalOpen(false);
+            setCurrentStep('review');
           }}
         />
       )}

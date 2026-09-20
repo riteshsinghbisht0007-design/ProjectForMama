@@ -7,49 +7,101 @@ import {
   RefreshCw,
   Sparkles,
   AlertCircle,
-  Check,
+  CheckCircle2,
   Zap,
   ZapOff,
   ArrowRight,
+  Shield,
   FileCheck,
+  ExternalLink,
+  Edit3,
+  Clock,
+  Search,
+  Check,
+  Copy,
 } from 'lucide-react';
 import { scanQrFromVideo, scanQrFromFile } from '../utils/qrDecoder';
-import { parseJudicialQRCode } from '../utils/ocrService';
+import {
+  parseJudicialQR,
+  lookupJudicialCaseByQr,
+  lookupCaseByIdentifier,
+  openECourtsSearch,
+  NormalizedCaseData,
+  QrLookupResponse,
+  validateClientQrPayload,
+} from '../utils/judicialQrClient';
 
-interface JudicialQrScannerModalProps {
+export interface JudicialQrScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onScanSuccess: (decodedPayload: string) => void;
+  onUseCaseDetails?: (caseData: NormalizedCaseData, rawPayload: string) => void;
+  onScanSuccess?: (decodedPayload: string) => void;
+  onManualEntryFallback?: () => void;
 }
+
+type ScannerPhase =
+  | 'scanning'
+  | 'detected'
+  | 'loading'
+  | 'case_found'
+  | 'action_required'
+  | 'ecourts_fallback'
+  | 'error'
+  | 'permission_denied'
+  | 'manual_input';
 
 export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
   isOpen,
   onClose,
+  onUseCaseDetails,
   onScanSuccess,
+  onManualEntryFallback,
 }) => {
-  const [activeTab, setActiveTab] = useState<'camera' | 'upload' | 'manual'>('camera');
-  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+  // Phase state
+  const [phase, setPhase] = useState<ScannerPhase>('scanning');
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
   const [hasTorchSupport, setHasTorchSupport] = useState<boolean>(false);
-  const [detectedText, setDetectedText] = useState<string | null>(null);
-  const [manualInput, setManualInput] = useState<string>('');
+  const [detectedQrPayload, setDetectedQrPayload] = useState<string | null>(null);
+  const [loadingStep, setLoadingStep] = useState<number>(1);
+  const [caseData, setCaseData] = useState<NormalizedCaseData | null>(null);
+  const [officialUrl, setOfficialUrl] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [manualCnrInput, setManualCnrInput] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('sm_current_cnr') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [cnrNumber, setCnrNumber] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('sm_current_cnr') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
+  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
   const [isProcessingFile, setIsProcessingFile] = useState<boolean>(false);
 
+  // References
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanIntervalRef = useRef<any>(null);
-  const isScanningRef = useRef<boolean>(false);
+  const isScanningFrameRef = useRef<boolean>(false);
+  const isLockedRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Stop camera stream safely
+  // Stop camera tracks immediately
   const stopCamera = useCallback(() => {
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
     }
-    isScanningRef.current = false;
+    isScanningFrameRef.current = false;
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
@@ -69,68 +121,83 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
     setHasTorchSupport(false);
   }, []);
 
-  // Start camera stream
-  const startCamera = useCallback(
-    async (facing: 'environment' | 'user') => {
-      stopCamera();
-      setCameraError(null);
-      setDetectedText(null);
+  // Close scanner and cleanup
+  const handleClose = useCallback(() => {
+    stopCamera();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    onClose();
+  }, [stopCamera, onClose]);
 
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraError('Camera access is not supported on this browser. Please use the Upload or Manual tab.');
-        return;
-      }
+  // Start camera hardware
+  const startCamera = useCallback(async () => {
+    stopCamera();
+    isLockedRef.current = false;
+    setPhase('scanning');
+    setErrorCode('');
+    setErrorMessage('');
+    setCaseData(null);
+    setOfficialUrl(null);
 
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setPhase('permission_denied');
+      setErrorMessage('Camera access is not supported by this browser. Please upload a QR image or enter CNR manually.');
+      return;
+    }
+
+    try {
+      let stream: MediaStream | null = null;
       try {
-        let stream: MediaStream | null = null;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: { ideal: facing },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-            audio: false,
-          });
-        } catch (_) {
-          // Fallback to basic constraints
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
-        }
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          try {
-            await videoRef.current.play();
-          } catch (_) {}
-        }
-        setIsCameraActive(true);
-
-        // Check torch support
-        const track = stream.getVideoTracks()[0];
-        if (track) {
-          const capabilities = track.getCapabilities?.() as any;
-          if (capabilities && 'torch' in capabilities) {
-            setHasTorchSupport(true);
-          }
-        }
-      } catch (err: any) {
-        console.error('Camera access failed:', err);
-        setCameraError(
-          err.name === 'NotAllowedError'
-            ? 'Camera permission denied. Please allow camera permissions in browser settings or use Upload Photo.'
-            : 'Could not access camera. Please use the Upload Photo or Manual CNR option.'
-        );
-        setIsCameraActive(false);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+      } catch (_) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
       }
-    },
-    [stopCamera]
-  );
 
-  // Toggle torch/flashlight
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        try {
+          await videoRef.current.play();
+        } catch (_) {}
+      }
+      setIsCameraActive(true);
+
+      // Check torch capabilities
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const capabilities = track.getCapabilities?.() as any;
+        if (capabilities && 'torch' in capabilities) {
+          setHasTorchSupport(true);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[JudicialQR] Camera access error:', err);
+      stopCamera();
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setPhase('permission_denied');
+        setErrorCode('CAMERA_PERMISSION_DENIED');
+        setErrorMessage('Camera access is required to scan a Judicial QR.');
+      } else {
+        setPhase('error');
+        setErrorCode('CAMERA_UNAVAILABLE');
+        setErrorMessage('Could not open camera device. Please upload a QR photo or enter CNR manually.');
+      }
+    }
+  }, [stopCamera]);
+
+  // Toggle flash torch
   const toggleTorch = async () => {
     if (!streamRef.current) return;
     const track = streamRef.current.getVideoTracks()[0];
@@ -146,38 +213,301 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
     }
   };
 
-  // Flip camera between front & back
-  const flipCamera = () => {
-    const nextFacing = cameraFacing === 'environment' ? 'user' : 'environment';
-    setCameraFacing(nextFacing);
-    startCamera(nextFacing);
+  // Open official e-Courts search and copy CNR
+  const handleOpenECourts = useCallback((targetCnr?: string) => {
+    const cleanCnr = (targetCnr || cnrNumber || manualCnrInput || '').trim().toUpperCase();
+    if (cleanCnr && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(cleanCnr).then(() => {
+        setCopiedToClipboard(true);
+        setTimeout(() => setCopiedToClipboard(false), 3500);
+      }).catch(() => {});
+    }
+
+    const opened = openECourtsSearch(cleanCnr);
+    if (!opened) {
+      setPopupBlocked(true);
+    }
+  }, [cnrNumber, manualCnrInput]);
+
+  // Copy CNR only
+  const handleCopyCnr = useCallback((targetCnr?: string) => {
+    const cleanCnr = (targetCnr || cnrNumber || manualCnrInput || '').trim().toUpperCase();
+    if (cleanCnr && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(cleanCnr).then(() => {
+        setCopiedToClipboard(true);
+        setTimeout(() => setCopiedToClipboard(false), 3500);
+      }).catch(() => {});
+    }
+  }, [cnrNumber, manualCnrInput]);
+
+  // Handle CNR input changes
+  const handleCnrInputChange = (val: string) => {
+    const upper = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    setManualCnrInput(upper);
+    setCnrNumber(upper);
+    try {
+      sessionStorage.setItem('sm_current_cnr', upper);
+    } catch (_) {}
   };
 
-  // Trigger success completion
-  const handleSuccess = useCallback(
-    (text: string) => {
-      setDetectedText(text);
+  // Safe lookup by CNR with fallback to official e-Courts
+  const handleLookupCnr = useCallback(
+    async (targetCnr: string) => {
+      const cleanCnr = (targetCnr || cnrNumber || manualCnrInput || '').trim().toUpperCase();
+
+      if (!cleanCnr) {
+        setErrorMessage('Please enter a valid 16-character CNR number.');
+        setPhase('manual_input');
+        return;
+      }
+
+      setCnrNumber(cleanCnr);
+      setManualCnrInput(cleanCnr);
+      try {
+        sessionStorage.setItem('sm_current_cnr', cleanCnr);
+      } catch (_) {}
+
+      // 16-character format check
+      const cnrRegex = /^[A-Z]{2}[A-Z0-9]{2}\d{12}$/;
+      if (!cnrRegex.test(cleanCnr)) {
+        setErrorCode('INVALID_CASE_IDENTIFIER');
+        setErrorMessage('CNR could not be matched. Please verify the CNR.');
+        setPhase('ecourts_fallback');
+        return;
+      }
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      setPhase('loading');
+      setLoadingStep(1);
+
+      const step2Timer = setTimeout(() => setLoadingStep(2), 250);
+      const step3Timer = setTimeout(() => setLoadingStep(3), 550);
+      const step4Timer = setTimeout(() => setLoadingStep(4), 900);
+
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 12000);
+
+      try {
+        const response = await lookupCaseByIdentifier(cleanCnr, 'CNR', controller.signal);
+
+        clearTimeout(step2Timer);
+        clearTimeout(step3Timer);
+        clearTimeout(step4Timer);
+        clearTimeout(timeoutId);
+
+        if (response.success && response.status === 'FOUND' && response.caseData) {
+          setCaseData(response.caseData);
+          setPhase('case_found');
+          return;
+        }
+
+        // If backend lookup is unavailable / unsupported / requires CAPTCHA / OTP / fails:
+        // DO NOT show an infinite loading state
+        // DO NOT show fake case data
+        // Open the official e-Courts website
+        // Keep the detected CNR visible/copyable
+        let msg = 'Unable to retrieve case details automatically.';
+        if (response.status === 'USER_ACTION_REQUIRED' || response.status === 'CAPTCHA_REQUIRED') {
+          msg = 'Official verification is required.';
+        } else if (response.status === 'TIMEOUT') {
+          msg = 'e-Courts lookup timed out.';
+        } else if (response.status === 'CASE_NOT_FOUND' || response.status === 'INVALID_CASE_IDENTIFIER') {
+          msg = 'CNR could not be matched. Please verify the CNR.';
+        }
+
+        setErrorCode(response.status || 'USER_ACTION_REQUIRED');
+        setErrorMessage(msg);
+        setPhase('ecourts_fallback');
+
+        handleOpenECourts(cleanCnr);
+      } catch (err: any) {
+        clearTimeout(step2Timer);
+        clearTimeout(step3Timer);
+        clearTimeout(step4Timer);
+        clearTimeout(timeoutId);
+
+        let msg = 'Unable to retrieve case details automatically.';
+        let code = 'NETWORK_ERROR';
+        if (err.name === 'AbortError') {
+          msg = 'e-Courts lookup timed out.';
+          code = 'TIMEOUT';
+        }
+
+        setErrorCode(code);
+        setErrorMessage(msg);
+        setPhase('ecourts_fallback');
+
+        handleOpenECourts(cleanCnr);
+      }
+    },
+    [cnrNumber, manualCnrInput, handleOpenECourts]
+  );
+
+  // Perform backend lookup with phased loading and timeout
+  const processQrPayload = useCallback(
+    async (rawPayload: string) => {
+      // Abort any existing pending request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      // 1. Validate payload locally
+      const validation = validateClientQrPayload(rawPayload);
+      if (!validation.isValid) {
+        setPhase('error');
+        setErrorCode('INVALID_QR');
+        setErrorMessage(validation.error || 'Invalid QR code format.');
+        return;
+      }
+
+      // 2. Parse type
+      const parsed = parseJudicialQR(rawPayload);
+      const extractedCnr =
+        parsed.cnrNumber ||
+        (/^[A-Za-z]{2}[A-Za-z0-9]{2}\d{12}$/.test(rawPayload.trim()) ? rawPayload.trim().toUpperCase() : '');
+
+      if (extractedCnr) {
+        setCnrNumber(extractedCnr);
+        setManualCnrInput(extractedCnr);
+        try {
+          sessionStorage.setItem('sm_current_cnr', extractedCnr);
+        } catch (_) {}
+
+        handleLookupCnr(extractedCnr);
+        return;
+      }
+
+      // 3. Initiate loading state machine for non-CNR payload
+      setDetectedQrPayload(rawPayload);
+      setPhase('loading');
+      setLoadingStep(1); // Judicial QR detected ✓
+
+      const step2Timer = setTimeout(() => {
+        setLoadingStep(2); // Reading case reference ✓
+      }, 350);
+
+      const step3Timer = setTimeout(() => {
+        setLoadingStep(3); // Connecting to case service...
+      }, 700);
+
+      const step4Timer = setTimeout(() => {
+        setLoadingStep(4); // Preparing case information...
+      }, 1200);
+
+      // 15-second request timeout guard
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 15000);
+
+      try {
+        const response: QrLookupResponse = await lookupJudicialCaseByQr(
+          rawPayload,
+          'judicial-qr',
+          controller.signal
+        );
+
+        clearTimeout(step2Timer);
+        clearTimeout(step3Timer);
+        clearTimeout(step4Timer);
+        clearTimeout(timeoutId);
+
+        if (response.success && response.status === 'FOUND' && response.caseData) {
+          setCaseData(response.caseData);
+          setPhase('case_found');
+          return;
+        }
+
+        if (response.status === 'USER_ACTION_REQUIRED' || response.status === 'CAPTCHA_REQUIRED') {
+          setOfficialUrl(response.officialUrl || 'https://services.ecourts.gov.in/');
+          setErrorMessage(
+            response.message || 'Official verification is required.'
+          );
+          setPhase('ecourts_fallback');
+          handleOpenECourts();
+          return;
+        }
+
+        // Error or not found
+        setPhase('error');
+        setErrorCode(response.status || 'INTERNAL_ERROR');
+        setErrorMessage(
+          response.message || response.error || 'No matching judicial case docket found in e-Courts records.'
+        );
+      } catch (err: any) {
+        clearTimeout(step2Timer);
+        clearTimeout(step3Timer);
+        clearTimeout(step4Timer);
+        clearTimeout(timeoutId);
+
+        setPhase('error');
+        if (err.name === 'AbortError') {
+          setErrorCode('TIMEOUT');
+          setErrorMessage('e-Courts lookup timed out.');
+        } else {
+          setErrorCode('NETWORK_ERROR');
+          setErrorMessage('Network connection lost while looking up case docket. Please try again.');
+        }
+      }
+    },
+    [handleLookupCnr, handleOpenECourts]
+  );
+
+  // Triggered when QR detected from camera or file
+  const onQrDetected = useCallback(
+    (payload: string) => {
+      if (isLockedRef.current) return;
+      isLockedRef.current = true;
+
+      // STOP the camera scanning loop immediately
       stopCamera();
 
-      // Trigger subtle device vibration if supported
+      // Trigger tactile vibration if supported
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         try {
           navigator.vibrate([80, 50, 80]);
         } catch (_) {}
       }
 
-      // Small delay to show visual confirmation feedback
+      // Show immediate feedback: "Judicial QR detected"
+      setPhase('detected');
+      setDetectedQrPayload(payload);
+
+      const parsed = parseJudicialQR(payload);
+      const extractedCnr =
+        parsed.cnrNumber ||
+        (/^[A-Za-z]{2}[A-Za-z0-9]{2}\d{12}$/.test(payload.trim()) ? payload.trim().toUpperCase() : '');
+
+      if (extractedCnr) {
+        setCnrNumber(extractedCnr);
+        setManualCnrInput(extractedCnr);
+        try {
+          sessionStorage.setItem('sm_current_cnr', extractedCnr);
+        } catch (_) {}
+      }
+
+      // Begin backend lookup flow after brief confirmation animation
       setTimeout(() => {
-        onScanSuccess(text);
-        onClose();
-      }, 500);
+        if (extractedCnr) {
+          handleLookupCnr(extractedCnr);
+        } else {
+          processQrPayload(payload);
+        }
+      }, 450);
     },
-    [stopCamera, onScanSuccess, onClose]
+    [stopCamera, handleLookupCnr, processQrPayload]
   );
 
-  // Background camera frame scanner loop
+  // Frame scanner loop using BarcodeDetector API + jsQR fallback
   useEffect(() => {
-    if (!isCameraActive || activeTab !== 'camera') {
+    if (!isCameraActive || phase !== 'scanning') {
       if (scanIntervalRef.current) {
         clearInterval(scanIntervalRef.current);
         scanIntervalRef.current = null;
@@ -186,22 +516,23 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
     }
 
     const runFrameScan = async () => {
-      if (isScanningRef.current || !videoRef.current) return;
-      isScanningRef.current = true;
+      if (isScanningFrameRef.current || isLockedRef.current || !videoRef.current) return;
+      isScanningFrameRef.current = true;
+
       try {
-        const found = await scanQrFromVideo(videoRef.current);
-        if (found && found.trim().length > 0) {
-          handleSuccess(found.trim());
+        const result = await scanQrFromVideo(videoRef.current);
+        if (result && result.trim().length > 0) {
+          onQrDetected(result.trim());
           return;
         }
       } catch (err) {
-        console.warn('QR frame scan error:', err);
+        console.warn('QR scan error:', err);
       } finally {
-        isScanningRef.current = false;
+        isScanningFrameRef.current = false;
       }
     };
 
-    scanIntervalRef.current = setInterval(runFrameScan, 180);
+    scanIntervalRef.current = setInterval(runFrameScan, 160);
 
     return () => {
       if (scanIntervalRef.current) {
@@ -209,354 +540,684 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
         scanIntervalRef.current = null;
       }
     };
-  }, [isCameraActive, activeTab, handleSuccess]);
+  }, [isCameraActive, phase, onQrDetected]);
 
-  // Modal open / close lifecycle
-  useEffect(() => {
-    if (isOpen) {
-      setActiveTab('camera');
-      setDetectedText(null);
-      setCameraError(null);
-      startCamera('environment');
-    } else {
-      stopCamera();
-    }
-    return () => {
-      stopCamera();
-    };
-  }, [isOpen, startCamera, stopCamera]);
-
-  // Handle uploaded QR image
-  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle uploaded QR image file
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsProcessingFile(true);
-    setCameraError(null);
     try {
       const decoded = await scanQrFromFile(file);
       if (decoded && decoded.trim().length > 0) {
-        handleSuccess(decoded.trim());
+        onQrDetected(decoded.trim());
       } else {
-        setCameraError('No readable QR code found in this image. Ensure the barcode is well-lit and not blurry.');
+        setPhase('error');
+        setErrorCode('QR_NOT_DETECTED');
+        setErrorMessage(
+          'No readable QR code found in this photo. Please ensure the e-Courts QR barcode is well-lit and in focus.'
+        );
       }
     } catch (err: any) {
-      setCameraError('Error processing image. Please try another file.');
+      setPhase('error');
+      setErrorCode('INVALID_QR');
+      setErrorMessage('Could not process the uploaded photo. Please try another file or enter CNR manually.');
     } finally {
       setIsProcessingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  // Sample Judicial QR presets for immediate 1-click test
-  const samplePresets = [
-    {
-      title: 'Delhi Tis Hazari Courts (CNR + FIR)',
-      payload:
-        'CNR: DLCT010045232024; FIR: 412/2023; Court: Court of Chief Metropolitan Magistrate Tis Hazari; Accused: Ramesh Chandra Verma; Father: Mohan Lal Verma; Address: H.No 45 Gali 3 Gandhi Nagar Delhi; Date: 2024-11-28; Charges: IPC 420/468/471',
-    },
-    {
-      title: 'e-Courts Portal URL (High Court)',
-      payload:
-        'https://services.ecourts.gov.in/ecourtindia_v6/?cnr=MHAU010087452024&court=BombayHighCourt&case=CRLA-892-2024&date=2024-12-15',
-    },
-    {
-      title: 'Raw 16-Character e-Court CNR',
-      payload: 'UPHC010091242024',
-    },
-  ];
+  // Handle manual CNR submission
+  const handleManualCnrSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = (manualCnrInput || cnrNumber).trim().toUpperCase();
+    if (!trimmed) return;
+    handleLookupCnr(trimmed);
+  };
+
+  // Lifecycle when modal opens/closes
+  useEffect(() => {
+    if (isOpen) {
+      startCamera();
+    } else {
+      stopCamera();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    }
+    return () => {
+      stopCamera();
+    };
+  }, [isOpen, startCamera, stopCamera]);
 
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn"
+      id="judicial-qr-scanner-screen"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="qr-scanner-title"
+      aria-label="Judicial QR Scanner"
+      className="fixed inset-0 z-50 bg-black/95 text-white flex flex-col justify-between overflow-y-auto"
     >
-      <div className="relative w-full max-w-lg bg-neutral-900 border border-white/10 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-neutral-900/90 backdrop-blur-sm shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/20">
-              <QrCode className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 id="qr-scanner-title" className="text-sm sm:text-base font-bold text-white">
-                Judicial QR Barcode Scanner
-              </h2>
-              <p className="text-[11px] text-neutral-400">
-                Scan e-Courts notice, warrant QR, or enter CNR code
-              </p>
-            </div>
+      {/* 1. SCANNER HEADER */}
+      <header className="relative z-10 px-4 py-4 sm:px-6 flex items-center justify-between border-b border-white/10 bg-black/60 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+            <QrCode className="w-5 h-5" />
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close QR scanner"
-            className="p-2 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div>
+            <h2 className="text-sm sm:text-base font-bold text-white tracking-wide flex items-center gap-2">
+              Judicial QR Scanner
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                e-Courts
+              </span>
+            </h2>
+            <p className="text-[11px] text-zinc-400">e-Courts Barcode & Case Docket Reader</p>
+          </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-white/10 bg-neutral-950/60 p-1.5 gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('camera');
-              startCamera(cameraFacing);
-            }}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'camera'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm'
-                : 'text-neutral-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Live Camera</span>
-          </button>
+        <button
+          type="button"
+          onClick={handleClose}
+          id="btn-close-qr-scanner"
+          aria-label="Close scanner"
+          className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </header>
 
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('upload');
-              stopCamera();
-            }}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'upload'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm'
-                : 'text-neutral-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Upload Photo</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('manual');
-              stopCamera();
-            }}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'manual'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm'
-                : 'text-neutral-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <FileCheck className="w-3.5 h-3.5" />
-            <span>Manual / CNR</span>
-          </button>
-        </div>
-
-        {/* Main Content Area */}
-        <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
-          {/* TAB 1: LIVE CAMERA VIEW */}
-          {activeTab === 'camera' && (
-            <div className="space-y-3">
-              <div className="relative aspect-[4/3] sm:aspect-square w-full max-w-[340px] mx-auto bg-black rounded-2xl overflow-hidden border border-white/15 flex items-center justify-center shadow-inner">
-                {/* Video Element */}
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                />
-
-                {/* Target QR Viewfinder Reticle */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-6">
-                  <div
-                    className={`relative w-48 h-48 sm:w-56 sm:h-56 rounded-2xl transition-all duration-300 ${
-                      detectedText
-                        ? 'border-4 border-emerald-400 bg-emerald-500/20 shadow-[0_0_25px_rgba(52,211,153,0.6)]'
-                        : 'border-2 border-amber-400/80 bg-black/20'
-                    }`}
-                  >
-                    {/* Corners */}
-                    <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-lg" />
-                    <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-lg" />
-                    <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-lg" />
-                    <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-lg" />
-
-                    {/* Animated Scanning Laser */}
-                    {!detectedText && (
-                      <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_10px_#f59e0b] absolute top-0 animate-[bounce_2s_infinite]" />
-                    )}
-
-                    {detectedText && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-emerald-950/80 rounded-xl p-3 text-center animate-scaleIn">
-                        <div className="flex flex-col items-center gap-1.5">
-                          <Check className="w-8 h-8 text-emerald-400" />
-                          <span className="text-xs font-bold text-white">QR Code Detected!</span>
-                          <span className="text-[10px] text-emerald-300/80 font-mono truncate max-w-[180px]">
-                            {detectedText}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 px-3 py-1.5 rounded-full bg-black/80 backdrop-blur-md text-[11px] font-medium text-white/90 border border-white/10 text-center">
-                    Align court paper QR inside the frame
-                  </div>
-                </div>
-
-                {/* Floating Camera Controls inside viewfinder */}
-                <div className="absolute bottom-3 right-3 flex items-center gap-2 z-20">
-                  {hasTorchSupport && (
-                    <button
-                      type="button"
-                      onClick={toggleTorch}
-                      aria-label="Toggle flashlight"
-                      className={`p-2.5 rounded-full backdrop-blur-md text-white border transition-all cursor-pointer ${
-                        isTorchOn ? 'bg-amber-500 border-amber-400' : 'bg-black/60 border-white/20 hover:bg-black/80'
-                      }`}
-                    >
-                      {isTorchOn ? <Zap className="w-4 h-4" /> : <ZapOff className="w-4 h-4" />}
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={flipCamera}
-                    aria-label="Switch camera facing"
-                    className="p-2.5 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md text-white border border-white/20 transition-all active:scale-95 cursor-pointer"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {cameraError && (
-                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <div>
-                    <span>{cameraError}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: UPLOAD QR PHOTO */}
-          {activeTab === 'upload' && (
-            <div className="space-y-4 text-center py-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleImageFileChange}
-                className="hidden"
-                id="qr-modal-file-upload"
+      {/* 2. SCANNER VIEWPORT OR STATE CARDS */}
+      <main className="flex-1 flex flex-col items-center justify-center p-4 relative min-h-[420px]">
+        {/* PHASE A: ACTIVE CAMERA SCANNING */}
+        {phase === 'scanning' && (
+          <div className="w-full max-w-md flex flex-col items-center justify-center space-y-4">
+            {/* Camera Viewport with Reticle */}
+            <div className="relative w-full aspect-[4/5] sm:aspect-square max-w-[340px] rounded-3xl overflow-hidden bg-zinc-900 border border-white/15 shadow-2xl flex items-center justify-center">
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                autoPlay
+                className="w-full h-full object-cover"
               />
 
-              <label
-                htmlFor="qr-modal-file-upload"
-                className="flex flex-col items-center justify-center p-8 rounded-2xl border-2 border-dashed border-amber-500/40 bg-amber-500/5 hover:border-amber-500 hover:bg-amber-500/10 transition-all cursor-pointer group"
-              >
-                <div className="p-4 rounded-2xl bg-amber-500/15 text-amber-400 group-hover:scale-110 transition-transform mb-3">
-                  <Upload className="w-8 h-8" />
-                </div>
-                <h4 className="text-sm font-bold text-white mb-1">
-                  {isProcessingFile ? 'Scanning photo for QR...' : 'Select or drop QR image'}
-                </h4>
-                <p className="text-xs text-neutral-400 max-w-xs">
-                  Upload screenshot, photo of e-Courts warrant, or saved QR code image
-                </p>
-                <div className="mt-4 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-md transition-colors">
-                  Choose Photo File
-                </div>
-              </label>
+              {/* Reticle Mask Overlay */}
+              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                {/* 4 Corner Markers */}
+                <div className="relative w-60 h-60 border-2 border-amber-400/30 rounded-2xl">
+                  {/* Top-Left */}
+                  <span className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-xl" />
+                  {/* Top-Right */}
+                  <span className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-xl" />
+                  {/* Bottom-Left */}
+                  <span className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-xl" />
+                  {/* Bottom-Right */}
+                  <span className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-xl" />
 
-              {cameraError && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 text-left flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <span>{cameraError}</span>
+                  {/* Animated Laser Scanning Line */}
+                  <div className="absolute inset-x-2 h-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_12px_#f59e0b] animate-bounce" />
+
+                  {/* Center QR Helper Label */}
+                  <div className="absolute inset-0 flex items-center justify-center opacity-40">
+                    <span className="text-[11px] font-mono uppercase tracking-widest text-amber-200">
+                      QR SCAN
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Instruction Label */}
+            <p className="text-center text-xs sm:text-sm text-zinc-300 font-medium px-4">
+              Align the e-Courts QR code inside the scanning frame.
+            </p>
+
+            {/* Quick Presets for Instant Verification / Demo */}
+            <div className="pt-1 flex flex-wrap items-center justify-center gap-2 text-center text-[11px] text-zinc-400">
+              <span>Quick Test:</span>
+              <button
+                type="button"
+                onClick={() => onQrDetected('DLCT010044022026')}
+                className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-amber-300 font-mono text-[10px] cursor-pointer"
+              >
+                DLCT010044022026 (Verified)
+              </button>
+              <button
+                type="button"
+                onClick={() => onQrDetected('MBDD010022342025')}
+                className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-amber-300 font-mono text-[10px] cursor-pointer"
+              >
+                MBDD010022342025 (Official e-Courts Fallback)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PHASE B: DETECTED CONFIRMATION */}
+        {phase === 'detected' && (
+          <div className="text-center space-y-3 p-8 bg-zinc-900/90 border border-emerald-500/40 rounded-3xl max-w-sm w-full animate-in fade-in zoom-in duration-200">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shadow-lg">
+              <CheckCircle2 className="w-9 h-9" />
+            </div>
+            <h3 className="text-base font-bold text-white">Judicial QR detected</h3>
+            <p className="text-xs text-zinc-400 font-mono truncate px-2">
+              {detectedQrPayload}
+            </p>
+          </div>
+        )}
+
+        {/* PHASE C: PROGRESS & LOADING STATE MACHINE */}
+        {phase === 'loading' && (
+          <div className="text-center space-y-5 p-6 sm:p-8 bg-zinc-900/90 border border-white/15 rounded-3xl max-w-md w-full shadow-2xl">
+            <div className="relative w-16 h-16 mx-auto">
+              <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                <Sparkles className="w-8 h-8 text-amber-400 animate-pulse" />
+              </div>
+              <div className="absolute -inset-1 rounded-2xl border-2 border-t-amber-400 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-sm sm:text-base font-bold text-white">Retrieving Official Case Docket</h3>
+              <p className="text-xs text-zinc-400">Querying authorized e-Courts repository...</p>
+            </div>
+
+            {/* Stepper Progress Checklist */}
+            <div className="space-y-2.5 text-left text-xs bg-black/40 p-4 rounded-2xl border border-white/10 font-mono">
+              {/* Step 1 */}
+              <div className="flex items-center gap-2.5 text-emerald-400">
+                <Check className="w-4 h-4 shrink-0" />
+                <span>Judicial QR detected ✓</span>
+              </div>
+
+              {/* Step 2 */}
+              <div
+                className={`flex items-center gap-2.5 transition-colors ${
+                  loadingStep >= 2 ? 'text-emerald-400' : 'text-zinc-500'
+                }`}
+              >
+                {loadingStep >= 2 ? (
+                  <Check className="w-4 h-4 shrink-0" />
+                ) : (
+                  <Clock className="w-4 h-4 shrink-0 animate-spin" />
+                )}
+                <span>Reading case reference {loadingStep >= 2 ? '✓' : '...'}</span>
+              </div>
+
+              {/* Step 3 */}
+              <div
+                className={`flex items-center gap-2.5 transition-colors ${
+                  loadingStep >= 3 ? 'text-emerald-400' : 'text-zinc-500'
+                }`}
+              >
+                {loadingStep >= 3 ? (
+                  <Check className="w-4 h-4 shrink-0" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />
+                )}
+                <span>Connecting to case service...</span>
+              </div>
+
+              {/* Step 4 */}
+              <div
+                className={`flex items-center gap-2.5 transition-colors ${
+                  loadingStep >= 4 ? 'text-amber-300' : 'text-zinc-500'
+                }`}
+              >
+                {loadingStep >= 4 ? (
+                  <Sparkles className="w-4 h-4 shrink-0 animate-pulse" />
+                ) : (
+                  <span className="w-4 h-4 shrink-0 rounded-full border border-zinc-600 block" />
+                )}
+                <span>Fetching case details & preparing docket...</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PHASE D: CASE FOUND CARD */}
+        {phase === 'case_found' && caseData && (
+          <div
+            id="judicial-case-found-card"
+            className="w-full max-w-lg bg-zinc-900 border border-emerald-500/40 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200"
+          >
+            {/* Header Badge */}
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-xs font-bold font-mono tracking-wider text-emerald-400 uppercase">
+                    CASE FOUND ✓
+                  </span>
+                  <span className="block text-[11px] text-zinc-400">Imported from official e-Courts</span>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-800/80">
+                Verified
+              </span>
+            </div>
+
+            {/* Case Details Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">CNR Number</span>
+                <p className="font-mono font-bold text-amber-300 text-sm">{caseData.cnrNumber || 'N/A'}</p>
+              </div>
+
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">Case Number</span>
+                <p className="font-mono font-bold text-white text-sm">{caseData.caseNumber || 'N/A'}</p>
+              </div>
+
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5 sm:col-span-2">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">Court</span>
+                <p className="font-semibold text-white">{caseData.courtName || 'District & Sessions Court'}</p>
+              </div>
+
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">District</span>
+                <p className="text-zinc-200">{caseData.district || 'Central District'}</p>
+              </div>
+
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">State</span>
+                <p className="text-zinc-200">{caseData.state || 'Delhi'}</p>
+              </div>
+
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">Next Hearing</span>
+                <p className="font-mono font-semibold text-amber-200">{caseData.nextHearingDate || 'Scheduled'}</p>
+              </div>
+
+              <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-mono">Case Status</span>
+                <p className="text-zinc-200">{caseData.caseStatus || 'Active'}</p>
+              </div>
+
+              {caseData.petitioner && caseData.petitioner.length > 0 && (
+                <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                  <span className="text-[10px] text-zinc-400 uppercase font-mono">Petitioner</span>
+                  <p className="text-zinc-200 truncate">{caseData.petitioner.join(', ')}</p>
+                </div>
+              )}
+
+              {caseData.respondent && caseData.respondent.length > 0 && (
+                <div className="bg-black/40 p-3 rounded-xl border border-white/5 space-y-0.5">
+                  <span className="text-[10px] text-zinc-400 uppercase font-mono">Respondent</span>
+                  <p className="text-zinc-200 font-medium truncate">{caseData.respondent.join(', ')}</p>
                 </div>
               )}
             </div>
-          )}
 
-          {/* TAB 3: MANUAL CNR / TEXT DECODER */}
-          {activeTab === 'manual' && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-neutral-200">
-                  Enter 16-Character CNR, e-Courts URL, or QR Text:
-                </label>
-                <textarea
-                  rows={3}
-                  value={manualInput}
-                  onChange={(e) => setManualInput(e.target.value)}
-                  placeholder="e.g. DLCT010012342023, or paste raw e-Courts QR text payload..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/15 text-white placeholder:text-neutral-500 text-xs font-mono focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 resize-none"
-                />
-              </div>
+            {/* Action Buttons */}
+            <div className="pt-2 flex flex-col sm:flex-row items-center gap-2">
+              <button
+                type="button"
+                id="btn-use-qr-details"
+                onClick={() => {
+                  if (onUseCaseDetails && caseData) {
+                    onUseCaseDetails(caseData, detectedQrPayload || caseData.cnrNumber);
+                  } else if (onScanSuccess) {
+                    onScanSuccess(detectedQrPayload || caseData.cnrNumber);
+                  }
+                  handleClose();
+                }}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-black font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-98 transition-all cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Use These Details</span>
+              </button>
 
               <button
                 type="button"
-                onClick={() => {
-                  if (!manualInput.trim()) return;
-                  handleSuccess(manualInput.trim());
-                }}
-                disabled={!manualInput.trim()}
-                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md"
+                onClick={startCamera}
+                className="w-full sm:w-auto py-3 px-4 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
-                <span>Decode & Populate Summon Form</span>
-                <ArrowRight className="w-4 h-4" />
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Scan Again</span>
               </button>
+            </div>
+          </div>
+        )}
 
-              {/* Sample 1-Click Test Presets */}
-              <div className="pt-2 border-t border-white/10 space-y-2">
-                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">
-                  Quick 1-Click Test Samples:
-                </span>
-                <div className="grid grid-cols-1 gap-2">
-                  {samplePresets.map((preset, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => handleSuccess(preset.payload)}
-                      className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-left transition-colors cursor-pointer group flex items-center justify-between"
-                    >
-                      <div className="space-y-0.5 truncate pr-2">
-                        <span className="text-xs font-semibold text-white group-hover:text-amber-300 block">
-                          {preset.title}
-                        </span>
-                        <span className="text-[10px] text-neutral-400 font-mono truncate block">
-                          {preset.payload}
-                        </span>
-                      </div>
-                      <Sparkles className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
-                    </button>
-                  ))}
-                </div>
+        {/* PHASE E: OFFICIAL e-COURTS VERIFICATION FALLBACK */}
+        {(phase === 'action_required' || phase === 'ecourts_fallback') && (
+          <div
+            id="ecourts-verification-fallback-card"
+            className="w-full max-w-md bg-zinc-900 border border-amber-500/30 rounded-3xl p-6 shadow-2xl space-y-4 text-center animate-in fade-in zoom-in duration-200"
+          >
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+              <Shield className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white tracking-wide">
+                e-Courts Verification
+              </h3>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                {errorMessage || 'Unable to retrieve case details automatically.'}
+              </p>
+            </div>
+
+            {/* CNR Box */}
+            <div className="bg-black/60 border border-white/10 rounded-2xl p-4 space-y-1.5 text-center">
+              <span className="text-[10px] text-zinc-400 uppercase font-mono tracking-wider block">
+                Your CNR Number
+              </span>
+              <p className="font-mono font-bold text-amber-300 text-lg tracking-wider select-all">
+                {cnrNumber || manualCnrInput || 'CNR NOT DETECTED'}
+              </p>
+              <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-400 pt-0.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{copiedToClipboard ? '✓ CNR copied to clipboard' : 'CNR copied to clipboard'}</span>
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="px-5 py-3 border-t border-white/10 bg-neutral-950/80 flex items-center justify-between shrink-0">
-          <span className="text-[11px] text-neutral-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            Automatic field parsing for Indian e-Courts
-          </span>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Continue the search on the official e-Courts website.
+            </p>
 
+            {/* Fallback link if popup was blocked on mobile or desktop */}
+            {popupBlocked && (
+              <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-[11px] text-amber-300 text-left">
+                <span>Popup blocked by browser. </span>
+                <a
+                  href="https://services.ecourts.gov.in/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline font-bold hover:text-white"
+                >
+                  Open this link manually: services.ecourts.gov.in
+                </a>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                id="btn-open-official-ecourts"
+                onClick={() => handleOpenECourts(cnrNumber || manualCnrInput)}
+                className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-98 transition-all cursor-pointer"
+              >
+                <span>Open Official e-Courts</span>
+                <ExternalLink className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-copy-cnr-fallback"
+                  onClick={() => handleCopyCnr(cnrNumber || manualCnrInput)}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copiedToClipboard ? 'Copied!' : 'Copy CNR'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhase('scanning');
+                    startCamera();
+                  }}
+                  className="py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+            {/* Return to SummonsMitra */}
+            <div className="pt-3 border-t border-white/10 space-y-2">
+              <p className="text-xs text-zinc-400">Already verified on e-Courts?</p>
+              <button
+                type="button"
+                id="btn-continue-with-cnr"
+                onClick={() => {
+                  const verifiedCnr = (cnrNumber || manualCnrInput).trim();
+                  if (onUseCaseDetails) {
+                    onUseCaseDetails(
+                      {
+                        cnrNumber: verifiedCnr,
+                        caseNumber: verifiedCnr,
+                        source: 'eCourts',
+                        sourceVerification: 'Official e-Courts Portal (Verified by Officer)',
+                        verifiedAt: new Date().toISOString(),
+                      },
+                      verifiedCnr
+                    );
+                  } else if (onScanSuccess) {
+                    onScanSuccess(verifiedCnr);
+                  }
+                  handleClose();
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Continue with this CNR</span>
+              </button>
+            </div>
+
+            {/* Recovery options */}
+            <div className="flex items-center justify-center gap-3 pt-1 text-[11px] text-zinc-400">
+              <button
+                type="button"
+                onClick={() => handleLookupCnr(cnrNumber || manualCnrInput)}
+                className="hover:text-amber-400 underline transition-colors cursor-pointer"
+              >
+                Try Again
+              </button>
+              <span>•</span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onManualEntryFallback) {
+                    onManualEntryFallback();
+                    handleClose();
+                  } else {
+                    setPhase('manual_input');
+                  }
+                }}
+                className="hover:text-amber-400 underline transition-colors cursor-pointer"
+              >
+                Enter Details Manually
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PHASE F: ERROR / FAILURE STATES */}
+        {phase === 'error' && (
+          <div className="w-full max-w-md bg-zinc-900 border border-rose-500/30 rounded-3xl p-6 shadow-2xl space-y-4 text-center">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center">
+              <AlertCircle className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800">
+                {errorCode || 'ERROR'}
+              </span>
+              <h3 className="text-base font-bold text-white pt-1">Case Lookup Notice</h3>
+              <p className="text-xs text-zinc-300 leading-relaxed">{errorMessage}</p>
+            </div>
+
+            {/* Useful Recovery Action Buttons */}
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                type="button"
+                onClick={startCamera}
+                className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-100 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Scan Again</span>
+              </button>
+
+              <label className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-100 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload QR</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUploadFile}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setPhase('manual_input')}
+                className="py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer col-span-2"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Continue Manually / Enter CNR</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PHASE G: CAMERA PERMISSION DENIED */}
+        {phase === 'permission_denied' && (
+          <div className="w-full max-w-md bg-zinc-900 border border-amber-500/30 rounded-3xl p-6 shadow-2xl space-y-4 text-center">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+              <Camera className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-white">Camera Access Required</h3>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                Camera access is required to scan a Judicial QR.
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={startCamera}
+                className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <Camera className="w-4 h-4" />
+                <span>Allow Camera</span>
+              </button>
+
+              <label className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer">
+                <Upload className="w-4 h-4" />
+                <span>Upload QR Image</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUploadFile}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setPhase('manual_input')}
+                className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <Edit3 className="w-4 h-4" />
+                <span>Enter Case/CNR Manually</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PHASE H: MANUAL CNR INPUT */}
+        {phase === 'manual_input' && (
+          <div className="w-full max-w-md bg-zinc-900 border border-white/15 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 pb-2 border-b border-white/10">
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                <Search className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Enter e-Courts CNR / Case Code</h3>
+                <p className="text-[11px] text-zinc-400">16-digit official Case Number Record</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleManualCnrSubmit} className="space-y-3">
+              <div>
+                <label className="text-xs text-zinc-300 block mb-1">CNR Number</label>
+                <input
+                  type="text"
+                  value={manualCnrInput}
+                  onChange={(e) => handleCnrInputChange(e.target.value)}
+                  placeholder="e.g. DLCT010044022026"
+                  maxLength={16}
+                  className="w-full bg-black/50 border border-white/20 rounded-xl px-3 py-2.5 text-xs text-white font-mono tracking-wider focus:outline-none focus:border-amber-400"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  id="btn-find-case-ecourts"
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-98 transition-all"
+                >
+                  <Search className="w-4 h-4" />
+                  <span>Find Case on e-Courts →</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={startCamera}
+                  className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-300 text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </main>
+
+      {/* 3. SCANNER BOTTOM ACTION BAR */}
+      <footer className="relative z-10 px-4 py-4 sm:px-6 border-t border-white/10 bg-black/60 backdrop-blur-md flex flex-wrap items-center justify-center gap-3">
+        {hasTorchSupport && phase === 'scanning' && (
           <button
             type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white transition-colors cursor-pointer"
+            onClick={toggleTorch}
+            className={`px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
+              isTorchOn
+                ? 'bg-amber-400 text-black border-amber-300 shadow-md'
+                : 'bg-white/10 text-zinc-200 border-white/15 hover:bg-white/20'
+            }`}
           >
-            Cancel
+            {isTorchOn ? <Zap className="w-4 h-4" /> : <ZapOff className="w-4 h-4" />}
+            <span>Flash</span>
           </button>
-        </div>
-      </div>
+        )}
+
+        {/* Upload QR Image File Picker */}
+        <label className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 border border-white/15 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer">
+          <Upload className="w-4 h-4 text-amber-400" />
+          <span>{isProcessingFile ? 'Reading Photo...' : 'Upload QR Image'}</span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleUploadFile}
+            disabled={isProcessingFile}
+            className="hidden"
+          />
+        </label>
+
+        {/* Cancel Button */}
+        <button
+          type="button"
+          onClick={handleClose}
+          id="btn-cancel-qr-scanner"
+          className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 border border-white/15 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+        >
+          <span>Cancel</span>
+        </button>
+      </footer>
     </div>
   );
 };

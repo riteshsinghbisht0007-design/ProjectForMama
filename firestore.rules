@@ -1,15 +1,112 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Only authenticated users can read/write their own summons
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation for User profile
+    function isValidUser(data) {
+      return data.uid is string && data.uid == request.auth.uid &&
+        data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 150 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 200)) &&
+        (!('badgeNumber' in data) || (data.badgeNumber is string && data.badgeNumber.size() <= 64)) &&
+        (!('rank' in data) || (data.rank is string && data.rank.size() <= 64)) &&
+        (!('policeStation' in data) || (data.policeStation is string && data.policeStation.size() <= 150)) &&
+        (!('district' in data) || (data.district is string && data.district.size() <= 150)) &&
+        (!('upcomingAlertDays' in data) || (data.upcomingAlertDays is number && data.upcomingAlertDays >= 1 && data.upcomingAlertDays <= 365));
+    }
+
+    // Validation for Summon record
+    function isValidSummon(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+        data.summonNumber is string && data.summonNumber.size() > 0 && data.summonNumber.size() <= 128 &&
+        data.caseNumber is string && data.caseNumber.size() > 0 && data.caseNumber.size() <= 128 &&
+        data.personName is string && data.personName.size() > 0 && data.personName.size() <= 200 &&
+        data.address is string && data.address.size() > 0 && data.address.size() <= 500 &&
+        data.courtName is string && data.courtName.size() > 0 && data.courtName.size() <= 200 &&
+        data.hearingDate is string && data.hearingDate.size() <= 32 &&
+        (!('status' in data) || (data.status in ['Pending', 'Upcoming', 'Completed', 'Served', 'Overdue'])) &&
+        (!('urgency' in data) || (data.urgency in ['Standard', 'High', 'Urgent']));
+    }
+
+    // Validation for Witness / Person record
+    function isValidWitness(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+        data.address is string && data.address.size() > 0 && data.address.size() <= 500 &&
+        data.role is string && (data.role in ['Witness', 'Respondent', 'Accused', 'Complainant', 'Surety', 'Other']) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 50));
+    }
+
+    // Validation for App Review & Feedback
+    function isValidReview(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+        data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+        data.feedback is string && data.feedback.size() >= 3 && data.feedback.size() <= 2000 &&
+        (!('officerName' in data) || (data.officerName is string && data.officerName.size() <= 150)) &&
+        (!('badgeNumber' in data) || (data.badgeNumber is string && data.badgeNumber.size() <= 64)) &&
+        (!('rank' in data) || (data.rank is string && data.rank.size() <= 64)) &&
+        (!('appVersion' in data) || (data.appVersion is string && data.appVersion.size() <= 32)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // Officer User Profiles
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow get: if isOwner(userId);
+      allow list: if false; // Disallow listing user directory to isolate PII
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().uid == existing().uid;
+      allow delete: if false;
     }
+
+    // Judicial Summons & Warrants
     match /summons/{summonId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId || request.auth.uid == request.resource.data.userId;
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(summonId) && incoming().userId == request.auth.uid && isValidSummon(incoming());
+      allow update: if isSignedIn() && isValidId(summonId) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && isValidSummon(incoming());
+      allow delete: if isSignedIn() && isValidId(summonId) && existing().userId == request.auth.uid;
     }
+
+    // Witnesses & People Directory
     match /witnesses/{witnessId} {
-      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId || request.auth.uid == request.resource.data.userId;
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(witnessId) && incoming().userId == request.auth.uid && isValidWitness(incoming());
+      allow update: if isSignedIn() && isValidId(witnessId) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && isValidWitness(incoming());
+      allow delete: if isSignedIn() && isValidId(witnessId) && existing().userId == request.auth.uid;
+    }
+
+    // Officer App Ratings & Reviews (Stored by authenticated userId to prevent duplicates)
+    match /reviews/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isOwner(userId) && isValidReview(incoming());
+      allow update: if isOwner(userId) && isValidReview(incoming()) && incoming().userId == existing().userId;
+      allow delete: if isOwner(userId);
     }
   }
 }
