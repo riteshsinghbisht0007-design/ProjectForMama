@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Summons Mitra</string>
+    <string name="title_activity_main">Summons Mitra</string>
+    <string name="package_name">com.summonsmitra.app</string>
+    <string name="custom_url_scheme">com.summonsmitra.app</string>
+</resources>
