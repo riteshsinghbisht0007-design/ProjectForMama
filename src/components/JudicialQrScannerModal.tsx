@@ -34,9 +34,10 @@ import {
 export interface JudicialQrScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUseCaseDetails?: (caseData: NormalizedCaseData, rawPayload: string) => void;
-  onScanSuccess?: (decodedPayload: string) => void;
+  onUseCaseDetails?: (caseData: NormalizedCaseData, rawPayload: string, sessionId?: string) => void;
+  onScanSuccess?: (decodedPayload: string, sessionId?: string) => void;
   onManualEntryFallback?: () => void;
+  sessionScanId?: string;
 }
 
 type ScannerPhase =
@@ -56,7 +57,13 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
   onUseCaseDetails,
   onScanSuccess,
   onManualEntryFallback,
+  sessionScanId,
 }) => {
+  const currentSessionIdRef = useRef<string>(
+    sessionScanId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `qr_${Date.now()}`)
+  );
+  const activeLookupSessionIdRef = useRef<string>('');
+
   // Phase state
   const [phase, setPhase] = useState<ScannerPhase>('scanning');
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
@@ -68,22 +75,30 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
   const [officialUrl, setOfficialUrl] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [manualCnrInput, setManualCnrInput] = useState<string>(() => {
-    try {
-      return sessionStorage.getItem('sm_current_cnr') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [cnrNumber, setCnrNumber] = useState<string>(() => {
-    try {
-      return sessionStorage.getItem('sm_current_cnr') || '';
-    } catch {
-      return '';
-    }
-  });
+  const [manualCnrInput, setManualCnrInput] = useState<string>('');
+  const [cnrNumber, setCnrNumber] = useState<string>('');
   const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
+  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
   const [isProcessingFile, setIsProcessingFile] = useState<boolean>(false);
+
+  // Sync session ID when reopened
+  useEffect(() => {
+    if (isOpen) {
+      currentSessionIdRef.current =
+        sessionScanId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `qr_${Date.now()}`);
+      activeLookupSessionIdRef.current = '';
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      setManualCnrInput('');
+      setCnrNumber('');
+      setCaseData(null);
+      setDetectedQrPayload(null);
+      setErrorCode('');
+      setErrorMessage('');
+    }
+  }, [isOpen, sessionScanId]);
 
   // References
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -123,6 +138,7 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
   // Close scanner and cleanup
   const handleClose = useCallback(() => {
     stopCamera();
+    activeLookupSessionIdRef.current = '';
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -133,6 +149,11 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
   // Start camera hardware
   const startCamera = useCallback(async () => {
     stopCamera();
+    activeLookupSessionIdRef.current = '';
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     isLockedRef.current = false;
     setPhase('scanning');
     setErrorCode('');
@@ -239,9 +260,20 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
     }
   }, [cnrNumber, manualCnrInput]);
 
-  // Handle CNR input changes
+  // Handle CNR input changes with immediate session and data invalidation
   const handleCnrInputChange = (val: string) => {
     const upper = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    
+    // Invalidate temporary e-Courts results and pending lookups immediately when CNR changes
+    setCaseData(null);
+    setErrorCode('');
+    setErrorMessage('');
+    activeLookupSessionIdRef.current = '';
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
     setManualCnrInput(upper);
     setCnrNumber(upper);
     try {
@@ -249,7 +281,7 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
     } catch (_) {}
   };
 
-  // Safe lookup by CNR with fallback to official e-Courts
+  // Safe lookup by CNR with session safety, AbortController, and standardized errors
   const handleLookupCnr = useCallback(
     async (targetCnr: string) => {
       const cleanCnr = (targetCnr || cnrNumber || manualCnrInput || '').trim().toUpperCase();
@@ -260,6 +292,18 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
         return;
       }
 
+      // Generate a brand new lookup session ID
+      const lookupSessionId =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `lookup_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+      // Invalidate previous session and clear stale data
+      activeLookupSessionIdRef.current = lookupSessionId;
+      setCaseData(null);
+      setErrorCode('');
+      setErrorMessage('');
+
       setCnrNumber(cleanCnr);
       setManualCnrInput(cleanCnr);
       try {
@@ -269,12 +313,13 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
       // 16-character format check
       const cnrRegex = /^[A-Z]{2}[A-Z0-9]{2}\d{12}$/;
       if (!cnrRegex.test(cleanCnr)) {
-        setErrorCode('INVALID_CASE_IDENTIFIER');
-        setErrorMessage('CNR could not be matched. Please verify the CNR.');
-        setPhase('ecourts_fallback');
+        setErrorCode('CASE_NOT_FOUND');
+        setErrorMessage('No case was found for this identifier.');
+        setPhase('error');
         return;
       }
 
+      // Abort any in-flight lookup request
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -284,9 +329,15 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
       setPhase('loading');
       setLoadingStep(1);
 
-      const step2Timer = setTimeout(() => setLoadingStep(2), 250);
-      const step3Timer = setTimeout(() => setLoadingStep(3), 550);
-      const step4Timer = setTimeout(() => setLoadingStep(4), 900);
+      const step2Timer = setTimeout(() => {
+        if (activeLookupSessionIdRef.current === lookupSessionId) setLoadingStep(2);
+      }, 250);
+      const step3Timer = setTimeout(() => {
+        if (activeLookupSessionIdRef.current === lookupSessionId) setLoadingStep(3);
+      }, 550);
+      const step4Timer = setTimeout(() => {
+        if (activeLookupSessionIdRef.current === lookupSessionId) setLoadingStep(4);
+      }, 900);
 
       const timeoutId = setTimeout(() => {
         controller.abort();
@@ -300,57 +351,94 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
         clearTimeout(step4Timer);
         clearTimeout(timeoutId);
 
+        // Strict session check: ignore stale async responses from prior scans
+        if (activeLookupSessionIdRef.current !== lookupSessionId || controller.signal.aborted) {
+          console.info(`[JudicialQR] Dropping stale lookup response for session (${lookupSessionId})`);
+          return;
+        }
+
         if (response.success && response.status === 'FOUND' && response.caseData) {
           setCaseData(response.caseData);
           setPhase('case_found');
           return;
         }
 
-        // If backend lookup is unavailable / unsupported / requires CAPTCHA / OTP / fails:
-        // DO NOT show an infinite loading state
-        // DO NOT show fake case data
-        // Open the official e-Courts website
-        // Keep the detected CNR visible/copyable
-        let msg = 'Unable to retrieve case details automatically.';
+        // CAPTCHA / Official Action Required
         if (response.status === 'USER_ACTION_REQUIRED' || response.status === 'CAPTCHA_REQUIRED') {
-          msg = 'Official verification is required.';
-        } else if (response.status === 'TIMEOUT') {
-          msg = 'e-Courts lookup timed out.';
-        } else if (response.status === 'CASE_NOT_FOUND' || response.status === 'INVALID_CASE_IDENTIFIER') {
-          msg = 'CNR could not be matched. Please verify the CNR.';
+          setErrorCode('CAPTCHA_REQUIRED');
+          setErrorMessage('Official verification is required to continue.');
+          setOfficialUrl(response.officialUrl || 'https://services.ecourts.gov.in/');
+          setPhase('action_required');
+          handleOpenECourts(cleanCnr);
+          return;
         }
 
-        setErrorCode(response.status || 'USER_ACTION_REQUIRED');
-        setErrorMessage(msg);
-        setPhase('ecourts_fallback');
+        // Case Not Found
+        if (response.status === 'CASE_NOT_FOUND' || response.status === 'INVALID_CASE_IDENTIFIER') {
+          setErrorCode('CASE_NOT_FOUND');
+          setErrorMessage('No case was found for this identifier.');
+          setPhase('error');
+          return;
+        }
 
-        handleOpenECourts(cleanCnr);
+        // Service Unavailable or Timeout
+        if (response.status === 'SOURCE_UNAVAILABLE' || response.status === 'TIMEOUT') {
+          setErrorCode('E_COURTS_UNAVAILABLE');
+          setErrorMessage('Official case lookup is temporarily unavailable.');
+          setPhase('error');
+          return;
+        }
+
+        // Network Error
+        if (response.status === 'NETWORK_ERROR') {
+          setErrorCode('NETWORK_ERROR');
+          setErrorMessage('Network connection failed. Please try again.');
+          setPhase('error');
+          return;
+        }
+
+        // Generic error
+        setErrorCode(response.status || 'CASE_NOT_FOUND');
+        setErrorMessage(response.message || 'No case was found for this identifier.');
+        setPhase('error');
       } catch (err: any) {
         clearTimeout(step2Timer);
         clearTimeout(step3Timer);
         clearTimeout(step4Timer);
         clearTimeout(timeoutId);
 
-        let msg = 'Unable to retrieve case details automatically.';
-        let code = 'NETWORK_ERROR';
-        if (err.name === 'AbortError') {
-          msg = 'e-Courts lookup timed out.';
-          code = 'TIMEOUT';
+        // Ignore if superseded or intentionally aborted
+        if (activeLookupSessionIdRef.current !== lookupSessionId) {
+          return;
         }
 
-        setErrorCode(code);
-        setErrorMessage(msg);
-        setPhase('ecourts_fallback');
-
-        handleOpenECourts(cleanCnr);
+        if (err.name === 'AbortError') {
+          setErrorCode('E_COURTS_UNAVAILABLE');
+          setErrorMessage('Official case lookup is temporarily unavailable.');
+        } else {
+          setErrorCode('NETWORK_ERROR');
+          setErrorMessage('Network connection failed. Please try again.');
+        }
+        setPhase('error');
       }
     },
     [cnrNumber, manualCnrInput, handleOpenECourts]
   );
 
-  // Perform backend lookup with phased loading and timeout
+  // Perform backend lookup with phased loading, session safety, and timeout
   const processQrPayload = useCallback(
     async (rawPayload: string) => {
+      // Generate unique session ID for this QR lookup
+      const lookupSessionId =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `lookup_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+      activeLookupSessionIdRef.current = lookupSessionId;
+      setCaseData(null);
+      setErrorCode('');
+      setErrorMessage('');
+
       // Abort any existing pending request
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -390,15 +478,15 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
       setLoadingStep(1); // Judicial QR detected ✓
 
       const step2Timer = setTimeout(() => {
-        setLoadingStep(2); // Reading case reference ✓
+        if (activeLookupSessionIdRef.current === lookupSessionId) setLoadingStep(2);
       }, 350);
 
       const step3Timer = setTimeout(() => {
-        setLoadingStep(3); // Connecting to case service...
+        if (activeLookupSessionIdRef.current === lookupSessionId) setLoadingStep(3);
       }, 700);
 
       const step4Timer = setTimeout(() => {
-        setLoadingStep(4); // Preparing case information...
+        if (activeLookupSessionIdRef.current === lookupSessionId) setLoadingStep(4);
       }, 1200);
 
       // 15-second request timeout guard
@@ -418,6 +506,12 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
         clearTimeout(step4Timer);
         clearTimeout(timeoutId);
 
+        // Strict session check
+        if (activeLookupSessionIdRef.current !== lookupSessionId || controller.signal.aborted) {
+          console.info(`[JudicialQR] Dropping stale QR lookup response for session (${lookupSessionId})`);
+          return;
+        }
+
         if (response.success && response.status === 'FOUND' && response.caseData) {
           setCaseData(response.caseData);
           setPhase('case_found');
@@ -426,19 +520,39 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
 
         if (response.status === 'USER_ACTION_REQUIRED' || response.status === 'CAPTCHA_REQUIRED') {
           setOfficialUrl(response.officialUrl || 'https://services.ecourts.gov.in/');
-          setErrorMessage(
-            response.message || 'Official verification is required.'
-          );
-          setPhase('ecourts_fallback');
+          setErrorCode('CAPTCHA_REQUIRED');
+          setErrorMessage('Official verification is required to continue.');
+          setPhase('action_required');
           handleOpenECourts();
+          return;
+        }
+
+        if (response.status === 'CASE_NOT_FOUND') {
+          setPhase('error');
+          setErrorCode('CASE_NOT_FOUND');
+          setErrorMessage('No case was found for this identifier.');
+          return;
+        }
+
+        if (response.status === 'NETWORK_ERROR') {
+          setPhase('error');
+          setErrorCode('NETWORK_ERROR');
+          setErrorMessage('Network connection failed. Please try again.');
+          return;
+        }
+
+        if (response.status === 'SOURCE_UNAVAILABLE' || response.status === 'TIMEOUT') {
+          setPhase('error');
+          setErrorCode('E_COURTS_UNAVAILABLE');
+          setErrorMessage('Official case lookup is temporarily unavailable.');
           return;
         }
 
         // Error or not found
         setPhase('error');
-        setErrorCode(response.status || 'INTERNAL_ERROR');
+        setErrorCode(response.status || 'CASE_NOT_FOUND');
         setErrorMessage(
-          response.message || response.error || 'No matching judicial case docket found in e-Courts records.'
+          response.message || response.error || 'No case was found for this identifier.'
         );
       } catch (err: any) {
         clearTimeout(step2Timer);
@@ -446,13 +560,15 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
         clearTimeout(step4Timer);
         clearTimeout(timeoutId);
 
+        if (activeLookupSessionIdRef.current !== lookupSessionId) return;
+
         setPhase('error');
         if (err.name === 'AbortError') {
-          setErrorCode('TIMEOUT');
-          setErrorMessage('e-Courts lookup timed out.');
+          setErrorCode('E_COURTS_UNAVAILABLE');
+          setErrorMessage('Official case lookup is temporarily unavailable.');
         } else {
           setErrorCode('NETWORK_ERROR');
-          setErrorMessage('Network connection lost while looking up case docket. Please try again.');
+          setErrorMessage('Network connection failed. Please try again.');
         }
       }
     },
@@ -860,9 +976,9 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
                 id="btn-use-qr-details"
                 onClick={() => {
                   if (onUseCaseDetails && caseData) {
-                    onUseCaseDetails(caseData, detectedQrPayload || caseData.cnrNumber);
+                    onUseCaseDetails(caseData, detectedQrPayload || caseData.cnrNumber, currentSessionIdRef.current);
                   } else if (onScanSuccess) {
-                    onScanSuccess(detectedQrPayload || caseData.cnrNumber);
+                    onScanSuccess(detectedQrPayload || caseData.cnrNumber, currentSessionIdRef.current);
                   }
                   handleClose();
                 }}
@@ -1090,7 +1206,7 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
             <div className="space-y-1">
               <h3 className="text-base font-bold text-white">Camera Access Required</h3>
               <p className="text-xs text-zinc-300 leading-relaxed">
-                Camera access is required to scan a Judicial QR.
+                Camera access is required for live scanning.
               </p>
             </div>
 
@@ -1106,7 +1222,7 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
 
               <label className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 text-zinc-200 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer">
                 <Upload className="w-4 h-4" />
-                <span>Upload QR Image</span>
+                <span>Upload Image</span>
                 <input
                   type="file"
                   accept="image/*"

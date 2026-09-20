@@ -1,0 +1,43 @@
+<svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shieldBorderGrad" x1="15" y1="10" x2="105" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#38BDF8" />
+      <stop offset="40%" stopColor="#0284C7" />
+      <stop offset="100%" stopColor="#0369A1" />
+    </linearGradient>
+    <linearGradient id="shieldFillGrad" x1="60" y1="12" x2="60" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#0B1A3A" />
+      <stop offset="50%" stopColor="#08142D" />
+      <stop offset="100%" stopColor="#040A1A" />
+    </linearGradient>
+    <linearGradient id="shieldCyanAccent" x1="20" y1="15" x2="100" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#00F5FF" />
+      <stop offset="50%" stopColor="#0EA5E9" />
+      <stop offset="100%" stopColor="#0284C7" />
+    </linearGradient>
+    <linearGradient id="courtWhiteGrad" x1="60" y1="40" x2="60" y2="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#FFFFFF" />
+      <stop offset="70%" stopColor="#E0F2FE" />
+      <stop offset="100%" stopColor="#BAE6FD" />
+    </linearGradient>
+    <linearGradient id="docGrad" x1="75" y1="28" x2="102" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stopColor="#38BDF8" />
+      <stop offset="100%" stopColor="#0284C7" />
+    </linearGradient>
+  </defs>
+  <path d="M60 12 L98 26 C98 58 84 86 60 106 C36 86 22 58 22 26 L60 12 Z" fill="url(#shieldFillGrad)" stroke="url(#shieldBorderGrad)" stroke-width="3.5" stroke-linejoin="round" />
+  <path d="M60 19 L91 30.5 C91 56 79 79 60 97 C41 79 29 56 29 30.5 L60 19 Z" fill="none" stroke="url(#shieldCyanAccent)" stroke-width="1.8" stroke-opacity="0.85" stroke-linejoin="round" />
+  <path d="M78 28 L94 28 C95.5 28 97 29.5 97 31 L97 48 L87 38 L78 38 Z" fill="url(#docGrad)" opacity="0.8" />
+  <path d="M87 28 L87 38 L97 38" fill="none" stroke="#BAE6FD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M60 41 L39 53 L81 53 Z" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.75" stroke-linejoin="round" />
+  <circle cx="60" cy="48" r="2.2" fill="#0369A1" />
+  <rect x="37" y="54" width="46" height="3.5" rx="1" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+  <rect x="41.5" y="58.5" width="7" height="23" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+  <rect x="56.5" y="58.5" width="7" height="23" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+  <rect x="71.5" y="58.5" width="7" height="23" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+  <line x1="45" y1="60" x2="45" y2="80" stroke="#0284C7" stroke-width="0.75" opacity="0.6" />
+  <line x1="60" y1="60" x2="60" y2="80" stroke="#0284C7" stroke-width="0.75" opacity="0.6" />
+  <line x1="75" y1="60" x2="75" y2="80" stroke="#0284C7" stroke-width="0.75" opacity="0.6" />
+  <rect x="35" y="82.5" width="50" height="3.5" rx="1" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+  <rect x="32" y="86.5" width="56" height="4" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+</svg>

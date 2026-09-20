@@ -28,6 +28,8 @@ import { OfficerProfileModal } from './components/OfficerProfileModal';
 import { AuthScreen } from './components/AuthScreen';
 import { WelcomeAnimation } from './components/WelcomeAnimation';
 import { WitnessDirectoryModal } from './components/WitnessDirectoryModal';
+import { AboutSummonsMitraModal } from './components/AboutSummonsMitraModal';
+import { ReviewAppModal } from './components/ReviewAppModal';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { registerPushServiceWorker } from './services/fcmService';
 import { auth } from './services/firebase';
@@ -52,6 +54,8 @@ export function App() {
   const [splitSummon, setSplitSummon] = useState<Summon | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isWitnessDirOpen, setIsWitnessDirOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isReviewAppOpen, setIsReviewAppOpen] = useState(false);
 
   // Special Mac-inspired Welcome animation state
   const [postLoginStage, setPostLoginStage] = useState<'idle' | 'hello' | 'email' | 'hold' | 'exit' | 'dashboard'>(() => {
@@ -298,6 +302,8 @@ export function App() {
         <TopNavBar
           onOpenProfile={() => setIsProfileOpen(true)}
           onOpenWitnessDirectory={() => setIsWitnessDirOpen(true)}
+          onOpenAbout={() => setIsAboutOpen(true)}
+          onOpenReviewApp={() => setIsReviewAppOpen(true)}
           onSelectSummon={(sid) => {
             const s = summons.find(x => x.id === sid || (x as any)._id === sid);
             if (s) setSelectedSummon(s);
@@ -555,6 +561,18 @@ export function App() {
       <WitnessDirectoryModal
         isOpen={isWitnessDirOpen}
         onClose={() => setIsWitnessDirOpen(false)}
+      />
+
+      {/* 6. About SummonsMitra Modal */}
+      <AboutSummonsMitraModal
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
+      />
+
+      {/* 7. App Review & Feedback Modal */}
+      <ReviewAppModal
+        isOpen={isReviewAppOpen}
+        onClose={() => setIsReviewAppOpen(false)}
       />
                 </motion.div>
       )}

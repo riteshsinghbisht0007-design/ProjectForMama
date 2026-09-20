@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Shield,
   Lock,
   User,
   Building,
@@ -14,6 +13,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { SummonsMitraLogo } from './SummonsMitraLogo';
 
 export const AuthScreen: React.FC = () => {
   const {
@@ -222,12 +222,12 @@ export const AuthScreen: React.FC = () => {
       <div className="w-full max-w-md space-y-6 relative z-10">
         {/* Header Branding */}
         <div className="text-center space-y-3">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-primary-muted to-background-alt border border-border-strong flex items-center justify-center shadow-2xl">
-            <Shield className="w-7 h-7 text-primary-text" />
+          <div className="flex justify-center">
+            <SummonsMitraLogo className="w-16 h-16 shadow-2xl drop-shadow-xl" />
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground font-mono">
-              SUMMONS MITRA
+              SUMMONSMITRA
             </h1>
             <p className="text-xs text-muted-foreground mt-1">
               Official Police Court Liaison & Judicial Notice Portal

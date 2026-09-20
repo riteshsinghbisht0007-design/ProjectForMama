@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useReducedMotion } from 'motion/react';
 import {
   X,
@@ -25,13 +25,20 @@ import {
   Plus,
   FileCheck,
   Maximize2,
+  AlertTriangle,
+  Sliders,
+  CheckCheck,
+  Trash2,
+  ShieldCheck,
+  Filter,
+  HelpCircle,
 } from 'lucide-react';
 import jsQR from 'jsqr';
 import { useSummons } from '../context/SummonContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from './Toast';
-import { scanSummonDocument, parseJudicialQRCode, ExtractedSummonData } from '../utils/ocrService';
-import { SummonStatus, SummonUrgency, WitnessPerson } from '../types';
+import { scanSummonDocument, parseJudicialQRCode, ExtractedSummonData, DEFAULT_CONFIDENCE_THRESHOLD } from '../utils/ocrService';
+import { SummonStatus, SummonUrgency, WitnessPerson, FieldExtractionMeta, ExtractionSource } from '../types';
 import { SelectPersonModal } from './SelectPersonModal';
 import { ImageCropperModal } from './ImageCropperModal';
 import { DocumentCameraScanner, ScanResultData } from './DocumentCameraScanner';
@@ -55,6 +62,16 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const { currentUser } = useAuth();
   const { showToast } = useToast();
   const shouldReduceMotion = useReducedMotion();
+
+  // Unique Scan Session Tracking for strict data isolation
+  const currentScanSessionIdRef = useRef<string>(
+    typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `scan_${Date.now()}`
+  );
+  const [currentScanSessionId, setCurrentScanSessionId] = useState<string>(() => currentScanSessionIdRef.current);
+  const [isUnreadable, setIsUnreadable] = useState<boolean>(false);
+
+  // Hidden file input reference for unreadable quick recovery
+  const recoveryFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Workflow step
   const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload');
@@ -94,6 +111,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const ocrAbortControllerRef = useRef<AbortController | null>(null);
 
   // Person selection modal states
   const [isSelectPersonOpen, setIsSelectPersonOpen] = useState(false);
@@ -105,6 +123,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const [detectedFields, setDetectedFields] = useState<Set<string>>(new Set());
   const [ocrMessage, setOcrMessage] = useState<string | null>(null);
   const [ocrSuccess, setOcrSuccess] = useState<boolean>(false);
+
+  // Field-level extraction metadata & confidence tracking (Zero-Hallucination & Verification Stage)
+  const [fieldMeta, setFieldMeta] = useState<Record<string, FieldExtractionMeta>>({});
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(DEFAULT_CONFIDENCE_THRESHOLD);
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'needsVerification' | 'verified' | 'notDetected'>('all');
+  const [showThresholdSettings, setShowThresholdSettings] = useState<boolean>(false);
 
   // Form fields
   const [summonNumber, setSummonNumber] = useState('');
@@ -137,6 +161,382 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Helper to populate fieldMeta structured map from OCR output
+  const populateFieldMetaFromOcr = useCallback((data: ExtractedSummonData, threshold: number) => {
+    const newMeta: Record<string, FieldExtractionMeta> = {};
+    const metaObj = data.fieldMetadata || {};
+
+    const allKeys: Array<{ key: string; val: string | undefined }> = [
+      { key: 'summonNumber', val: data.summonNumber },
+      { key: 'caseNumber', val: data.caseNumber },
+      { key: 'personName', val: data.personName },
+      { key: 'fatherName', val: data.fatherName },
+      { key: 'address', val: data.address },
+      { key: 'courtName', val: data.courtName },
+      { key: 'courtAddress', val: data.courtAddress },
+      { key: 'policeStation', val: data.policeStation },
+      { key: 'district', val: data.district },
+      { key: 'state', val: data.state },
+      { key: 'issueDate', val: data.issueDate },
+      { key: 'hearingDate', val: data.hearingDate },
+      { key: 'issuingAuthority', val: data.issuingAuthority },
+      { key: 'officerDetails', val: data.officerDetails },
+      { key: 'offenseCharges', val: data.offenseCharges },
+      { key: 'urgency', val: data.urgency },
+    ];
+
+    allKeys.forEach(({ key, val }) => {
+      const rawMeta = metaObj[key];
+      const hasValue = !!(val && val.trim());
+      const confidence = rawMeta ? rawMeta.confidence : (hasValue ? 0.88 : 0);
+      const isDetected = hasValue && confidence > 0;
+
+      newMeta[key] = {
+        field: key,
+        value: val || '',
+        confidence: isDetected ? confidence : 0,
+        source: isDetected ? 'ocr' : 'user',
+        isVerified: isDetected ? confidence >= threshold : false,
+        isModified: false,
+      };
+    });
+
+    setFieldMeta(newMeta);
+  }, []);
+
+  // Check if a field is considered verified
+  const isFieldVerified = useCallback((fieldKey: string, val: string) => {
+    if (!val || !val.trim()) return false;
+    const meta = fieldMeta[fieldKey];
+    if (!meta) return true;
+    if (meta.source === 'ecourts' || meta.source === 'user' || meta.isModified || meta.isVerified) return true;
+    return meta.confidence >= confidenceThreshold;
+  }, [fieldMeta, confidenceThreshold]);
+
+  // Check if a field specifically needs verification (low confidence OCR)
+  const isFieldNeedsVerification = useCallback((fieldKey: string, val: string) => {
+    if (!val || !val.trim()) return false;
+    const meta = fieldMeta[fieldKey];
+    if (!meta) return false;
+    if (meta.source === 'ecourts' || meta.isModified || meta.isVerified) return false;
+    return meta.source === 'ocr' && meta.confidence < confidenceThreshold;
+  }, [fieldMeta, confidenceThreshold]);
+
+  // User manual field edit handler
+  const handleFieldChange = (fieldKey: string, newValue: string, setter: (val: string) => void) => {
+    setter(newValue);
+    setFieldMeta(prev => {
+      const current = prev[fieldKey];
+      return {
+        ...prev,
+        [fieldKey]: {
+          field: fieldKey,
+          value: newValue,
+          confidence: 1.0,
+          source: current?.source === 'ecourts' ? 'ecourts' : (current?.source === 'ocr' ? 'ocr' : 'user'),
+          isVerified: true,
+          isModified: true,
+        }
+      };
+    });
+  };
+
+  // User marks single field as verified
+  const handleVerifyField = (fieldKey: string) => {
+    setFieldMeta(prev => {
+      const current = prev[fieldKey];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [fieldKey]: {
+          ...current,
+          isVerified: true,
+          isModified: true,
+        }
+      };
+    });
+    showToast('Field marked as verified.', 'info', 'Verified');
+  };
+
+  // User clears single field (e.g. false positive removal)
+  const handleClearField = (fieldKey: string, setter: (val: string) => void) => {
+    setter('');
+    setFieldMeta(prev => ({
+      ...prev,
+      [fieldKey]: {
+        field: fieldKey,
+        value: '',
+        confidence: 0,
+        source: 'user',
+        isVerified: false,
+        isModified: true,
+      }
+    }));
+  };
+
+  // User marks all fields as verified
+  const handleVerifyAll = () => {
+    setFieldMeta(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(key => {
+        if (next[key].value && next[key].value.trim()) {
+          next[key] = {
+            ...next[key],
+            isVerified: true,
+            isModified: true,
+          };
+        }
+      });
+      return next;
+    });
+    showToast('All populated fields verified.', 'success', 'Verified All');
+  };
+
+  // User clears unverified low-confidence fields
+  const handleClearUnverified = () => {
+    const fields = [
+      { key: 'summonNumber', setter: setSummonNumber, val: summonNumber },
+      { key: 'caseNumber', setter: setCaseNumber, val: caseNumber },
+      { key: 'hearingDate', setter: setHearingDate, val: hearingDate },
+      { key: 'personName', setter: setPersonName, val: personName },
+      { key: 'fatherName', setter: setFatherName, val: fatherName },
+      { key: 'address', setter: setAddress, val: address },
+      { key: 'courtName', setter: setCourtName, val: courtName },
+      { key: 'courtAddress', setter: setCourtAddress, val: courtAddress },
+      { key: 'policeStation', setter: setPoliceStation, val: policeStation },
+      { key: 'district', setter: setDistrict, val: district },
+      { key: 'issuingAuthority', setter: setIssuingAuthority, val: issuingAuthority },
+      { key: 'offenseCharges', setter: setOffenseCharges, val: offenseCharges },
+    ];
+
+    let cleared = 0;
+    fields.forEach(({ key, setter, val }) => {
+      if (val && isFieldNeedsVerification(key, val)) {
+        handleClearField(key, setter);
+        cleared++;
+      }
+    });
+
+    if (cleared > 0) {
+      showToast(`Cleared ${cleared} unverified field(s).`, 'info', 'Cleared');
+    } else {
+      showToast('No unverified fields to clear.', 'info', 'Notice');
+    }
+  };
+
+  // Structured metrics for Review & Save stage
+  const fieldStats = useMemo(() => {
+    const fields = [
+      { key: 'summonNumber', val: summonNumber },
+      { key: 'caseNumber', val: caseNumber },
+      { key: 'hearingDate', val: hearingDate },
+      { key: 'personName', val: personName },
+      { key: 'fatherName', val: fatherName },
+      { key: 'address', val: address },
+      { key: 'courtName', val: courtName },
+      { key: 'courtAddress', val: courtAddress },
+      { key: 'policeStation', val: policeStation },
+      { key: 'district', val: district },
+      { key: 'state', val: state },
+      { key: 'issuingAuthority', val: issuingAuthority },
+      { key: 'offenseCharges', val: offenseCharges },
+    ];
+
+    let ocrCount = 0;
+    let ecourtsCount = 0;
+    let userCount = 0;
+    let needsVerificationCount = 0;
+    let notDetectedCount = 0;
+    let verifiedCount = 0;
+
+    fields.forEach(({ key, val }) => {
+      const meta = fieldMeta[key];
+      const hasVal = !!(val && val.trim());
+      if (!hasVal) {
+        notDetectedCount++;
+      } else if (meta?.source === 'ecourts') {
+        ecourtsCount++;
+        verifiedCount++;
+      } else if (meta?.source === 'ocr') {
+        ocrCount++;
+        if (meta.confidence < confidenceThreshold && !meta.isVerified && !meta.isModified) {
+          needsVerificationCount++;
+        } else {
+          verifiedCount++;
+        }
+      } else {
+        userCount++;
+        verifiedCount++;
+      }
+    });
+
+    return {
+      total: fields.length,
+      ocrCount,
+      ecourtsCount,
+      userCount,
+      needsVerificationCount,
+      notDetectedCount,
+      verifiedCount,
+    };
+  }, [
+    fieldMeta,
+    confidenceThreshold,
+    summonNumber,
+    caseNumber,
+    hearingDate,
+    personName,
+    fatherName,
+    address,
+    courtName,
+    courtAddress,
+    policeStation,
+    district,
+    state,
+    issuingAuthority,
+    offenseCharges,
+  ]);
+
+  // Badge renderer displaying source, confidence percentage, and verify/clear actions
+  const renderFieldStatusBadge = (fieldKey: string, currentValue: string, onVerify?: () => void, onClear?: () => void) => {
+    const meta = fieldMeta[fieldKey];
+    const hasVal = !!(currentValue && currentValue.trim());
+
+    if (!hasVal) {
+      return (
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border flex items-center gap-1 font-medium">
+          Not detected
+        </span>
+      );
+    }
+
+    if (meta?.source === 'ecourts') {
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+            <Check className="w-2.5 h-2.5" />
+            ✓ Retrieved from e-Courts
+          </span>
+          {onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              title="Clear field"
+              className="text-[10px] text-muted-foreground hover:text-red-500 px-1 py-0.5 rounded hover:bg-muted cursor-pointer transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    if (meta?.isModified || meta?.source === 'user') {
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+            <Edit3 className="w-2.5 h-2.5" />
+            ✎ User verified
+          </span>
+          {onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              title="Clear field"
+              className="text-[10px] text-muted-foreground hover:text-red-500 px-1 py-0.5 rounded hover:bg-muted cursor-pointer transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    if (meta?.source === 'ocr') {
+      const conf = meta.confidence;
+      const isBelowThreshold = conf < confidenceThreshold && !meta.isVerified;
+
+      if (isBelowThreshold) {
+        return (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-900 dark:text-amber-200 border border-amber-500/40 flex items-center gap-1">
+              <AlertTriangle className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+              ⚠ Needs verification ({Math.round(conf * 100)}%)
+            </span>
+            {onVerify && (
+              <button
+                type="button"
+                onClick={onVerify}
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-0.5 shadow-sm transition-transform active:scale-95 cursor-pointer"
+              >
+                <Check className="w-2.5 h-2.5" /> Verify
+              </button>
+            )}
+            {onClear && (
+              <button
+                type="button"
+                onClick={onClear}
+                title="Clear field"
+                className="text-[10px] text-muted-foreground hover:text-red-500 px-1 py-0.5 rounded hover:bg-muted cursor-pointer transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30 flex items-center gap-1">
+            <Check className="w-2.5 h-2.5" />
+            ✓ Extracted from document ({Math.round(conf * 100)}%)
+          </span>
+          {onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              title="Clear field"
+              className="text-[10px] text-muted-foreground hover:text-red-500 px-1 py-0.5 rounded hover:bg-muted cursor-pointer transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // Helper for input border styles based on source & verification
+  const getFieldInputClass = (fieldKey: string, currentValue: string) => {
+    const meta = fieldMeta[fieldKey];
+    const hasVal = !!(currentValue && currentValue.trim());
+
+    if (!hasVal) {
+      return 'border-border bg-background focus:border-primary-text';
+    }
+
+    if (meta?.source === 'ecourts') {
+      return 'border-emerald-500/60 bg-emerald-500/[0.02] focus:border-emerald-600';
+    }
+
+    if (meta?.isModified || meta?.source === 'user') {
+      return 'border-indigo-500/60 bg-indigo-500/[0.02] focus:border-indigo-600';
+    }
+
+    if (meta?.source === 'ocr') {
+      const isBelowThreshold = meta.confidence < confidenceThreshold && !meta.isVerified;
+      if (isBelowThreshold) {
+        return 'border-amber-500/70 bg-amber-500/[0.03] focus:border-amber-600';
+      }
+      return 'border-blue-500/60 bg-blue-500/[0.02] focus:border-blue-600';
+    }
+
+    return 'border-border bg-background';
+  };
+
   // Completely stops and cleans up camera hardware tracks
   const stopCamera = useCallback((turnOffActive: boolean = true) => {
     if (streamRef.current) {
@@ -157,22 +557,77 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     setIsCameraStarting(false);
   }, []);
 
+  // Strict Scan Session Initializer & Complete Invalidation of Stale State
+  const startNewScanSession = useCallback(() => {
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+      ocrAbortControllerRef.current = null;
+    }
+
+    const newSessionId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `scan_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    currentScanSessionIdRef.current = newSessionId;
+    setCurrentScanSessionId(newSessionId);
+
+    // Invalidate all temporary attachments
+    setRawFile(null);
+    setAttachmentPreview(null);
+    setOriginalAttachmentPreview(null);
+    setViewingOriginalDoc(false);
+    setAttachmentType(null);
+    setFileName('');
+    setCropImageSrc(null);
+
+    // Invalidate all OCR / QR telemetry
+    setDetectedFields(new Set());
+    setFieldMeta({});
+    setReviewFilter('all');
+    setShowThresholdSettings(false);
+    setOcrMessage(null);
+    setOcrSuccess(false);
+    setIsUnreadable(false);
+    setImportedFromECourts(false);
+    setImportedFields(new Set());
+    setECourtsImportMeta(null);
+    setFormError(null);
+
+    // Invalidate all form fields to prevent ANY stale data leakage
+    setSummonNumber('');
+    setCaseNumber('');
+    setPersonName('');
+    setFatherName('');
+    setAddress('');
+    setCourtName('');
+    setCourtAddress('');
+    setPoliceStation(currentUser?.policeStation || '');
+    setDistrict(currentUser?.district || '');
+    setState('Delhi NCT');
+    setIssueDate(new Date().toISOString().split('T')[0]);
+    setHearingDate(
+      defaultHearingDate ||
+        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    );
+    setIssuingAuthority('');
+    setOfficerDetails(currentUser ? `${currentUser.rank} ${currentUser.displayName}` : '');
+    setOffenseCharges('');
+    setUrgency('Standard');
+    setStatus('Pending');
+
+    return newSessionId;
+  }, [currentUser, defaultHearingDate]);
+
   // Reset or initialize on open
   useEffect(() => {
     if (isOpen) {
+      startNewScanSession();
       setCurrentStep('upload');
-      setFormError(null);
-      setOcrMessage(null);
-      if (defaultHearingDate) setHearingDate(defaultHearingDate);
-      if (currentUser) {
-        setPoliceStation(currentUser.policeStation || '');
-        setDistrict(currentUser.district || '');
-        setOfficerDetails(`${currentUser.rank} ${currentUser.displayName}`);
-      }
     } else {
       stopCamera(true);
     }
-  }, [isOpen, defaultHearingDate, currentUser, stopCamera]);
+  }, [isOpen, startNewScanSession, stopCamera]);
 
   // Clean up camera on unmount
   useEffect(() => {
@@ -204,20 +659,23 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     }
   }, [isCameraActive]);
 
-  // Launch dedicated full-screen camera modal
+  // Launch dedicated full-screen camera modal with a fresh scanSessionId
   const handleOpenFullScreenCamera = () => {
     stopCamera(true);
+    startNewScanSession();
     setScannerInitialImage(null);
     setScannerInitialFileName(undefined);
     setIsFullScreenScannerOpen(true);
   };
 
-  // Launch mobile scanner directly in crop mode for uploaded gallery image
+  // Launch mobile scanner directly in crop mode for uploaded gallery image with a fresh scanSessionId
   const handleSelectPhotoForScanner = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     stopCamera(true);
+    startNewScanSession();
+
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -231,6 +689,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
   // Handler when DocumentCameraScanner completes (Camera/Upload -> Review -> Crop -> AI OCR)
   const handleScannerComplete = (result: ScanResultData) => {
+    // Strictly verify session ownership before modifying any form or preview state
+    if (result.scanSessionId && result.scanSessionId !== currentScanSessionIdRef.current) {
+      console.info(
+        `[AddSummonModal] Ignored stale scan completion for session (${result.scanSessionId}) vs active (${currentScanSessionIdRef.current})`
+      );
+      return;
+    }
+
     setIsFullScreenScannerOpen(false);
     setScannerInitialImage(null);
     setScannerInitialFileName(undefined);
@@ -242,6 +708,27 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     setOriginalAttachmentPreview(result.originalDataUrl);
     setViewingOriginalDoc(false);
 
+    // Check if document was unreadable
+    if (result.ocrResult.isUnreadable || !result.ocrResult.success) {
+      setIsUnreadable(true);
+      setOcrSuccess(false);
+      setDetectedFields(new Set());
+      setFieldMeta({});
+      setOcrMessage(
+        result.ocrResult.message ||
+          "Unable to read this document. Please upload a clearer image, scan again, or enter details manually."
+      );
+      showToast(
+        "Unable to read this document. You may scan again, upload another, or enter details manually.",
+        'warning',
+        'Unreadable Document'
+      );
+      setCurrentStep('review');
+      return;
+    }
+
+    // Populate extracted fields cleanly from fresh result
+    setIsUnreadable(false);
     const data = result.ocrResult.data;
     const detected = new Set(data.detectedFields || []);
     setDetectedFields(detected);
@@ -261,6 +748,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     if (data.offenseCharges) setOffenseCharges(data.offenseCharges);
     if (data.urgency) setUrgency(data.urgency);
 
+    populateFieldMetaFromOcr(data, confidenceThreshold);
+
     setOcrSuccess(result.ocrResult.success);
     setOcrMessage(result.ocrResult.message ? sanitizeOcrNotice(result.ocrResult.message) : null);
 
@@ -273,11 +762,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     setCurrentStep('review');
   };
 
-  // Gallery image selection
+  // Gallery image selection with fresh session ID
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    startNewScanSession();
     setCropFileName(file.name);
     setCropMimeType(file.type || 'image/jpeg');
 
@@ -289,28 +779,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     e.target.value = '';
   };
 
-  // PDF file upload
-  
-  const handleCropComplete = (croppedBlob: Blob) => {
-    setCropImageSrc(null);
-    const file = new File([croppedBlob], cropFileName, { type: cropMimeType });
-    setRawFile(file);
-    setAttachmentType('image');
-    setFileName(cropFileName);
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setAttachmentPreview(dataUrl);
-      triggerOcrPipeline(dataUrl, cropMimeType);
-    };
-    reader.readAsDataURL(croppedBlob);
-  };
-
+  // PDF file upload with fresh session ID
   const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const newSessionId = startNewScanSession();
     setRawFile(file);
     setFileName(file.name);
     setAttachmentType('pdf');
@@ -319,9 +793,27 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     reader.onload = () => {
       const result = reader.result as string;
       setAttachmentPreview(result);
-      triggerOcrPipeline(result, 'application/pdf');
+      triggerOcrPipeline(result, 'application/pdf', newSessionId);
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleCropComplete = (croppedBlob: Blob) => {
+    setCropImageSrc(null);
+    const file = new File([croppedBlob], cropFileName, { type: cropMimeType });
+    setRawFile(file);
+    setAttachmentType('image');
+    setFileName(cropFileName);
+
+    const activeSessionId = currentScanSessionIdRef.current;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setAttachmentPreview(dataUrl);
+      triggerOcrPipeline(dataUrl, cropMimeType, activeSessionId);
+    };
+    reader.readAsDataURL(croppedBlob);
   };
 
   // Helper to sanitize technical AI error messages into professional judicial guidance
@@ -344,13 +836,22 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     return clean;
   };
 
-  // Trigger AI OCR extraction pipeline with visual phases
-  const triggerOcrPipeline = async (dataUrl: string, mime: string) => {
+  // Trigger AI OCR extraction pipeline with visual phases and strict session tracking
+  const triggerOcrPipeline = async (dataUrl: string, mime: string, targetSessionId?: string) => {
     if (isExtracting) return; // Prevent concurrent OCR runs
+
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+    }
+    const ocrController = new AbortController();
+    ocrAbortControllerRef.current = ocrController;
+
+    const sessionId = targetSessionId || currentScanSessionIdRef.current;
     setCurrentStep('processing');
     setIsExtracting(true);
 
     setOcrSuccess(false);
+    setIsUnreadable(false);
     setOcrMessage(null);
     setExtractStatusText('Transmitting document to legal AI scanner...');
 
@@ -363,15 +864,40 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     }, 1800);
 
     try {
-      const result = await scanSummonDocument(dataUrl, mime);
+      const result = await scanSummonDocument(dataUrl, mime, sessionId, ocrController.signal);
       clearTimeout(timer1);
       clearTimeout(timer2);
 
+      // Check if session changed while awaiting response
+      if (currentScanSessionIdRef.current !== sessionId) {
+        console.info(`[AddSummonModal] Dropping OCR response for superseded session (${sessionId})`);
+        return;
+      }
+
+      // Check if document was unreadable or failed
+      if (result.isUnreadable || !result.success) {
+        setIsUnreadable(true);
+        setOcrSuccess(false);
+        setDetectedFields(new Set());
+        setFieldMeta({});
+        setOcrMessage(
+          result.message ||
+            "Unable to read this document. Please upload a clearer image, scan again, or enter details manually."
+        );
+        showToast(
+          "Unable to read this document. You may scan again, upload another, or enter details manually.",
+          'warning',
+          'Unreadable Document'
+        );
+        return;
+      }
+
+      setIsUnreadable(false);
       const data = result.data;
       const detected = new Set(data.detectedFields || []);
       setDetectedFields(detected);
 
-      // Populate form fields only with actual extracted values
+      // Populate form fields only with actual extracted values from THIS session
       if (data.summonNumber) setSummonNumber(data.summonNumber);
       if (data.caseNumber) setCaseNumber(data.caseNumber);
       if (data.personName) setPersonName(data.personName);
@@ -387,6 +913,8 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       if (data.offenseCharges) setOffenseCharges(data.offenseCharges);
       if (data.urgency) setUrgency(data.urgency);
 
+      populateFieldMetaFromOcr(data, confidenceThreshold);
+
       setOcrSuccess(result.success);
       setOcrMessage(result.message ? sanitizeOcrNotice(result.message) : null);
 
@@ -397,9 +925,19 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       }
     } catch (err: any) {
       console.warn('OCR Pipeline caught error:', err);
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+
+      if (currentScanSessionIdRef.current !== sessionId) return;
+
+      setIsUnreadable(true);
       setOcrSuccess(false);
-      setOcrMessage(sanitizeOcrNotice(err.message) || 'Document OCR scan did not complete. Please enter details manually.');
-      showToast('Document scan could not complete. Please enter details manually.', 'warning', 'Scan Notice');
+      setDetectedFields(new Set());
+      setFieldMeta({});
+      setOcrMessage(
+        "Unable to read this document. Please upload a clearer image, scan again, or enter details manually."
+      );
+      showToast('Document scan could not complete. You may scan again, upload another, or enter details manually.', 'warning', 'Scan Notice');
     } finally {
       setIsExtracting(false);
       setCurrentStep('review');
@@ -407,7 +945,12 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   };
 
   // Process decoded QR code payload from camera, image, or manual text
-  const handleDecodedQr = (rawQrData: string) => {
+  const handleDecodedQr = (rawQrData: string, qrSessionId?: string) => {
+    if (qrSessionId && qrSessionId !== currentScanSessionIdRef.current) {
+      console.info(`[AddSummonModal] Ignored stale QR code decode for session (${qrSessionId})`);
+      return;
+    }
+
     stopCamera(true);
     const parsed = parseJudicialQRCode(rawQrData.trim());
     const detected = new Set<string>();
@@ -463,6 +1006,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
     setDetectedFields(detected);
     setIsQrModalOpen(false);
+    setIsUnreadable(false);
     setOcrSuccess(true);
     if (detected.size > 0) {
       setOcrMessage(`Successfully decoded ${detected.size} judicial parameters from e-Court QR code`);
@@ -475,13 +1019,18 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   };
 
   // Apply verified e-Courts case data from dedicated Judicial QR Scanner
-  const handleApplyCaseDetails = (caseData: NormalizedCaseData, rawPayload: string) => {
+  const handleApplyCaseDetails = (caseData: NormalizedCaseData, rawPayload: string, sessionId?: string) => {
+    if (sessionId && sessionId !== currentScanSessionIdRef.current) {
+      console.info(`[AddSummonModal] Ignored stale e-Courts QR details for session (${sessionId})`);
+      return;
+    }
+
     setIsQrModalOpen(false);
     stopCamera(true);
 
     const imported = new Set<string>();
 
-    const applySafe = (currentVal: string, newVal: string, setter: (val: string) => void, key: string) => {
+    const applySafe = (_currentVal: string, newVal: string, setter: (val: string) => void, key: string) => {
       if (newVal && newVal.trim()) {
         setter(newVal.trim());
         imported.add(key);
@@ -548,6 +1097,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       applySafe(offenseCharges, secStr, setOffenseCharges, 'offenseCharges');
     }
 
+    setIsUnreadable(false);
     setImportedFromECourts(true);
     setImportedFields(imported);
     setDetectedFields(imported);
@@ -558,6 +1108,21 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         timeStyle: 'short',
       }),
       cnrNumber: caseData.cnrNumber || rawPayload,
+    });
+
+    setFieldMeta(prev => {
+      const next = { ...prev };
+      imported.forEach(k => {
+        next[k] = {
+          field: k,
+          value: next[k]?.value || '',
+          confidence: 1.0,
+          source: 'ecourts',
+          isVerified: true,
+          isModified: false,
+        };
+      });
+      return next;
     });
 
     setOcrSuccess(true);
@@ -579,6 +1144,15 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     if (person.fatherName) detected.add('fatherName');
     detected.add('address');
     setDetectedFields(detected);
+
+    setFieldMeta(prev => ({
+      ...prev,
+      personName: { field: 'personName', value: person.name, confidence: 1.0, source: 'user', isVerified: true, isModified: true },
+      ...(person.fatherName ? { fatherName: { field: 'fatherName', value: person.fatherName, confidence: 1.0, source: 'user', isVerified: true, isModified: true } } : {}),
+      address: { field: 'address', value: person.address, confidence: 1.0, source: 'user', isVerified: true, isModified: true },
+      ...(person.policeStation ? { policeStation: { field: 'policeStation', value: person.policeStation, confidence: 1.0, source: 'user', isVerified: true, isModified: true } } : {}),
+      ...(person.district ? { district: { field: 'district', value: person.district, confidence: 1.0, source: 'user', isVerified: true, isModified: true } } : {}),
+    }));
 
     showToast(`Autofilled particulars for ${person.name} (${person.role})`, 'success', 'Person Selected');
   };
@@ -1012,8 +1586,189 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                 </div>
               )}
 
-              {/* Status & Autofill Banner */}
-              {ocrMessage && (
+              {/* Unreadable Document Notice with Immediate Actions */}
+              {isUnreadable && (
+                <div
+                  id="unreadable-document-alert"
+                  className="p-4 rounded-2xl border-2 border-amber-500/50 bg-amber-500/10 text-foreground space-y-3.5 shadow-sm"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1 text-xs">
+                      <h4 className="font-bold text-sm text-foreground">Unable to read this document.</h4>
+                      <p className="text-foreground/90 font-medium leading-relaxed">
+                        The document could not be reliably read or contains unreadable text. Please upload a clearer image, scan again, or enter details manually.
+                      </p>
+                      <p className="text-muted-foreground text-[11px]">
+                        Zero-hallucination safeguard active: no synthetic or previous case data has been populated.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-amber-500/20">
+                    <button
+                      type="button"
+                      onClick={handleOpenFullScreenCamera}
+                      id="btn-unreadable-scan-again"
+                      className="px-3.5 py-2 rounded-xl bg-primary-btn hover:bg-primary-hover text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-transform active:scale-95"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Scan Again</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => recoveryFileInputRef.current?.click()}
+                      id="btn-unreadable-upload-another"
+                      className="px-3.5 py-2 rounded-xl bg-card border border-border hover:border-primary-text text-foreground text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-transform active:scale-95"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Clearer Image</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsUnreadable(false)}
+                      id="btn-unreadable-continue-manually"
+                      className="px-3.5 py-2 rounded-xl bg-muted/70 hover:bg-muted text-foreground text-xs font-semibold flex items-center gap-1.5 cursor-pointer ml-auto transition-colors"
+                    >
+                      <Edit3 className="w-4 h-4 text-muted-foreground" />
+                      <span>Enter Details Manually</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* DEDICATED REVIEW & CONFIDENCE AUDIT BAR */}
+              {!isUnreadable && (
+                <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-border pb-3.5">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        <h3 className="text-sm font-bold text-foreground">Docket Verification & Accuracy Control</h3>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary-text font-bold">
+                          Zero-Hallucination Active
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Verify extracted fields before saving to official police records. Unclear text requires manual review.
+                      </p>
+                    </div>
+
+                    {/* Confidence Threshold Switcher */}
+                    <div className="flex items-center gap-2 bg-muted p-1 rounded-xl border border-border self-start md:self-auto">
+                      <span className="text-[11px] font-medium text-muted-foreground pl-2 flex items-center gap-1">
+                        <Sliders className="w-3 h-3" /> Min Confidence:
+                      </span>
+                      {[
+                        { label: '60% (Relaxed)', val: 0.60 },
+                        { label: '75% (Standard)', val: 0.75 },
+                        { label: '85% (Strict)', val: 0.85 },
+                      ].map((preset) => (
+                        <button
+                          key={preset.val}
+                          type="button"
+                          onClick={() => setConfidenceThreshold(preset.val)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                            confidenceThreshold === preset.val
+                              ? 'bg-card text-foreground shadow-sm font-bold border border-border'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Extraction Metrics & Batch Controls */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    {/* Summary Badges */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReviewFilter('all')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border ${
+                          reviewFilter === 'all'
+                            ? 'bg-primary-btn text-white border-primary-btn shadow-sm'
+                            : 'bg-muted text-foreground border-border hover:bg-card'
+                        }`}
+                      >
+                        <span>All Fields ({fieldStats.total})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setReviewFilter('needsVerification')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border ${
+                          reviewFilter === 'needsVerification'
+                            ? 'bg-amber-600 text-white border-amber-600 shadow-sm font-bold'
+                            : fieldStats.needsVerificationCount > 0
+                            ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                            : 'bg-muted text-muted-foreground border-border hover:bg-card'
+                        }`}
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>Needs Verification ({fieldStats.needsVerificationCount})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setReviewFilter('verified')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border ${
+                          reviewFilter === 'verified'
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                            : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                        }`}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>Verified ({fieldStats.verifiedCount})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setReviewFilter('notDetected')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border ${
+                          reviewFilter === 'notDetected'
+                            ? 'bg-neutral-700 text-white border-neutral-700 shadow-sm'
+                            : 'bg-muted text-muted-foreground border-border hover:bg-card'
+                        }`}
+                      >
+                        <span>Not Detected ({fieldStats.notDetectedCount})</span>
+                      </button>
+                    </div>
+
+                    {/* Batch Verification Actions */}
+                    <div className="flex items-center gap-2">
+                      {fieldStats.needsVerificationCount > 0 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleVerifyAll}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Verify All ({fieldStats.needsVerificationCount})</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleClearUnverified}
+                            className="px-3 py-1.5 rounded-xl bg-card border border-border hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <span>Clear Low-Conf</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Status & Autofill Banner (When NOT Unreadable) */}
+              {!isUnreadable && ocrMessage && (
                 <div
                   className={`p-3.5 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 ${
                     ocrSuccess
@@ -1034,7 +1789,7 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                       <span>{ocrMessage}</span>
                       {detectedFields.size > 0 && (
                         <span className="block mt-1 font-mono text-[11px] opacity-85">
-                          Autofilled: {Array.from(detectedFields).join(', ')}
+                          Detected in doc: {Array.from(detectedFields).join(', ')}
                         </span>
                       )}
                     </div>
@@ -1165,75 +1920,37 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Summon / Warrant / CNR *</span>
-                      {importedFromECourts && importedFields.has('summonNumber') ? (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
-                          <Check className="w-2.5 h-2.5" />
-                          Imported from e-Courts
-                        </span>
-                      ) : detectedFields.has('summonNumber') ? (
-                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
-                          AI Autofilled
-                        </span>
-                      ) : !summonNumber ? (
-                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
-                          Verify / Required
-                        </span>
-                      ) : null}
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Summon / Warrant / CNR *
+                      </label>
+                      {renderFieldStatusBadge('summonNumber', summonNumber, () => handleVerifyField('summonNumber'), () => handleClearField('summonNumber', setSummonNumber))}
+                    </div>
                     <input
                       type="text"
                       id="input-summon-number"
                       value={summonNumber}
-                      onChange={(e) => setSummonNumber(e.target.value)}
+                      onChange={(e) => handleFieldChange('summonNumber', e.target.value, setSummonNumber)}
                       placeholder="e.g. SUM/2026/0892 or CNR Number"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        importedFromECourts && importedFields.has('summonNumber')
-                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                          : detectedFields.has('summonNumber')
-                          ? 'border-emerald-500/60'
-                          : !summonNumber
-                          ? 'border-amber-500/40 bg-amber-500/[0.03]'
-                          : 'border-border'
-                      }`}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('summonNumber', summonNumber)}`}
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Case / FIR Number *</span>
-                      {importedFromECourts && importedFields.has('caseNumber') ? (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
-                          <Check className="w-2.5 h-2.5" />
-                          Imported from e-Courts
-                        </span>
-                      ) : detectedFields.has('caseNumber') ? (
-                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
-                          AI Autofilled
-                        </span>
-                      ) : !caseNumber ? (
-                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
-                          Verify / Required
-                        </span>
-                      ) : null}
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Case / FIR Number *
+                      </label>
+                      {renderFieldStatusBadge('caseNumber', caseNumber, () => handleVerifyField('caseNumber'), () => handleClearField('caseNumber', setCaseNumber))}
+                    </div>
                     <input
                       type="text"
                       id="input-case-number"
                       value={caseNumber}
-                      onChange={(e) => setCaseNumber(e.target.value)}
+                      onChange={(e) => handleFieldChange('caseNumber', e.target.value, setCaseNumber)}
                       placeholder="e.g. FIR No. 248/2025 PS Tis Hazari"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        importedFromECourts && importedFields.has('caseNumber')
-                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                          : detectedFields.has('caseNumber')
-                          ? 'border-emerald-500/60'
-                          : !caseNumber
-                          ? 'border-amber-500/40 bg-amber-500/[0.03]'
-                          : 'border-border'
-                      }`}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('caseNumber', caseNumber)}`}
                       required
                     />
                   </div>
@@ -1241,10 +1958,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Priority Urgency</label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Priority Urgency</label>
+                      {renderFieldStatusBadge('urgency', urgency, () => handleVerifyField('urgency'), () => handleClearField('urgency', (v) => setUrgency(v as SummonUrgency)))}
+                    </div>
                     <select
                       value={urgency}
-                      onChange={(e) => setUrgency(e.target.value as SummonUrgency)}
+                      onChange={(e) => handleFieldChange('urgency', e.target.value, (v) => setUrgency(v as SummonUrgency))}
                       className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     >
                       <option value="Standard">Standard</option>
@@ -1254,10 +1974,13 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Docket Status</label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Docket Status</label>
+                      {renderFieldStatusBadge('status', status, () => handleVerifyField('status'), () => handleClearField('status', (v) => setStatus(v as SummonStatus)))}
+                    </div>
                     <select
                       value={status}
-                      onChange={(e) => setStatus(e.target.value as SummonStatus)}
+                      onChange={(e) => handleFieldChange('status', e.target.value, (v) => setStatus(v as SummonStatus))}
                       className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     >
                       <option value="Pending">Pending Service</option>
@@ -1267,38 +1990,31 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Issue Date</label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Issue Date</label>
+                      {renderFieldStatusBadge('issueDate', issueDate, () => handleVerifyField('issueDate'), () => handleClearField('issueDate', setIssueDate))}
+                    </div>
                     <input
                       type="date"
                       value={issueDate}
-                      onChange={(e) => setIssueDate(e.target.value)}
+                      onChange={(e) => handleFieldChange('issueDate', e.target.value, setIssueDate)}
                       className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Hearing Date *</span>
-                      {importedFromECourts && importedFields.has('hearingDate') ? (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                          e-Courts
-                        </span>
-                      ) : detectedFields.has('hearingDate') ? (
-                        <span className="text-[10px] font-mono text-emerald-800 dark:text-emerald-400">AI</span>
-                      ) : null}
-                    </label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Hearing Date *
+                      </label>
+                      {renderFieldStatusBadge('hearingDate', hearingDate, () => handleVerifyField('hearingDate'), () => handleClearField('hearingDate', setHearingDate))}
+                    </div>
                     <input
                       type="date"
                       id="input-hearing-date"
                       value={hearingDate}
-                      onChange={(e) => setHearingDate(e.target.value)}
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        importedFromECourts && importedFields.has('hearingDate')
-                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                          : detectedFields.has('hearingDate')
-                          ? 'border-emerald-500/60'
-                          : 'border-border'
-                      }`}
+                      onChange={(e) => handleFieldChange('hearingDate', e.target.value, setHearingDate)}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('hearingDate', hearingDate)}`}
                       required
                     />
                   </div>
@@ -1337,75 +2053,54 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Respondent / Accused Full Name *</span>
-                      {importedFromECourts && importedFields.has('personName') ? (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
-                          <Check className="w-2.5 h-2.5" />
-                          Imported from e-Courts
-                        </span>
-                      ) : detectedFields.has('personName') ? (
-                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
-                          AI Autofilled
-                        </span>
-                      ) : null}
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Respondent / Accused Full Name *
+                      </label>
+                      {renderFieldStatusBadge('personName', personName, () => handleVerifyField('personName'), () => handleClearField('personName', setPersonName))}
+                    </div>
                     <input
                       type="text"
                       id="input-person-name"
                       value={personName}
-                      onChange={(e) => setPersonName(e.target.value)}
+                      onChange={(e) => handleFieldChange('personName', e.target.value, setPersonName)}
                       placeholder="e.g. Ramesh Chandra / Rajesh Gupta"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        importedFromECourts && importedFields.has('personName')
-                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                          : detectedFields.has('personName')
-                          ? 'border-emerald-500/60'
-                          : 'border-border'
-                      }`}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('personName', personName)}`}
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Father / Husband / Guardian Name</span>
-                      {detectedFields.has('fatherName') && (
-                        <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
-                          AI Autofilled
-                        </span>
-                      )}
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Father / Husband / Guardian Name
+                      </label>
+                      {renderFieldStatusBadge('fatherName', fatherName, () => handleVerifyField('fatherName'), () => handleClearField('fatherName', setFatherName))}
+                    </div>
                     <input
                       type="text"
                       value={fatherName}
-                      onChange={(e) => setFatherName(e.target.value)}
+                      onChange={(e) => handleFieldChange('fatherName', e.target.value, setFatherName)}
                       placeholder="e.g. Sh. Harish Chandra"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        detectedFields.has('fatherName') ? 'border-emerald-500/60' : 'border-border'
-                      }`}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('fatherName', fatherName)}`}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                    <span className="font-semibold text-foreground">Complete Delivery / Serving Address *</span>
-                    {detectedFields.has('address') && (
-                      <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 dark:bg-emerald-950/80 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-700/50">
-                        AI Autofilled
-                      </span>
-                    )}
-                  </label>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      <span className="font-semibold text-foreground">Complete Delivery / Serving Address *</span>
+                    </label>
+                    {renderFieldStatusBadge('address', address, () => handleVerifyField('address'), () => handleClearField('address', setAddress))}
+                  </div>
                   <textarea
                     id="input-serving-address"
                     value={address}
-                    onChange={(e) => setAddress(e.target.value)}
+                    onChange={(e) => handleFieldChange('address', e.target.value, setAddress)}
                     placeholder="House/Flat number, Street, Landmark, Village/Colony, Pincode for field officer delivery..."
                     rows={3}
-                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                      detectedFields.has('address') ? 'border-emerald-500/60' : 'border-border'
-                    }`}
+                    className={`w-full bg-background border rounded-xl p-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('address', address)}`}
                     required
                   />
                 </div>
@@ -1420,148 +2115,111 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Court / Bench Name *</span>
-                      {importedFromECourts && importedFields.has('courtName') ? (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1">
-                          <Check className="w-2.5 h-2.5" />
-                          Imported from e-Courts
-                        </span>
-                      ) : detectedFields.has('courtName') ? (
-                        <span className="text-[10px] font-mono text-emerald-800 dark:text-emerald-400">AI</span>
-                      ) : null}
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Court / Bench Name *
+                      </label>
+                      {renderFieldStatusBadge('courtName', courtName, () => handleVerifyField('courtName'), () => handleClearField('courtName', setCourtName))}
+                    </div>
                     <input
                       type="text"
                       id="input-court-name"
                       value={courtName}
-                      onChange={(e) => setCourtName(e.target.value)}
+                      onChange={(e) => handleFieldChange('courtName', e.target.value, setCourtName)}
                       placeholder="e.g. Chief Metropolitan Magistrate Court"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        importedFromECourts && importedFields.has('courtName')
-                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                          : 'border-border'
-                      }`}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('courtName', courtName)}`}
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Court Room / Complex Location</span>
-                      {importedFromECourts && importedFields.has('courtAddress') && (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                          e-Courts
-                        </span>
-                      )}
-                    </label>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Court Room / Complex Location
+                      </label>
+                      {renderFieldStatusBadge('courtAddress', courtAddress, () => handleVerifyField('courtAddress'), () => handleClearField('courtAddress', setCourtAddress))}
+                    </div>
                     <input
                       type="text"
                       value={courtAddress}
-                      onChange={(e) => setCourtAddress(e.target.value)}
+                      onChange={(e) => handleFieldChange('courtAddress', e.target.value, setCourtAddress)}
                       placeholder="e.g. Room No. 14, Tis Hazari Courts Complex, Delhi"
-                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                        importedFromECourts && importedFields.has('courtAddress')
-                          ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                          : 'border-border'
-                      }`}
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('courtAddress', courtAddress)}`}
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Police Station</span>
-                      {importedFromECourts && importedFields.has('policeStation') && (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                          e-Courts
-                        </span>
-                      )}
-                    </label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Police Station</label>
+                      {renderFieldStatusBadge('policeStation', policeStation, () => handleVerifyField('policeStation'), () => handleClearField('policeStation', setPoliceStation))}
+                    </div>
                     <input
                       type="text"
                       value={policeStation}
-                      onChange={(e) => setPoliceStation(e.target.value)}
+                      onChange={(e) => handleFieldChange('policeStation', e.target.value, setPoliceStation)}
                       placeholder="e.g. PS Tis Hazari"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('policeStation', policeStation)}`}
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>District</span>
-                      {importedFromECourts && importedFields.has('district') && (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                          e-Courts
-                        </span>
-                      )}
-                    </label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">District</label>
+                      {renderFieldStatusBadge('district', district, () => handleVerifyField('district'), () => handleClearField('district', setDistrict))}
+                    </div>
                     <input
                       type="text"
                       value={district}
-                      onChange={(e) => setDistrict(e.target.value)}
+                      onChange={(e) => handleFieldChange('district', e.target.value, setDistrict)}
                       placeholder="e.g. Central Delhi"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('district', district)}`}
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>State</span>
-                      {importedFromECourts && importedFields.has('state') && (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                          e-Courts
-                        </span>
-                      )}
-                    </label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">State</label>
+                      {renderFieldStatusBadge('state', state, () => handleVerifyField('state'), () => handleClearField('state', setState))}
+                    </div>
                     <input
                       type="text"
                       value={state}
-                      onChange={(e) => setState(e.target.value)}
+                      onChange={(e) => handleFieldChange('state', e.target.value, setState)}
                       placeholder="e.g. Delhi NCT"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('state', state)}`}
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                      <span>Issuing Authority</span>
-                      {importedFromECourts && importedFields.has('issuingAuthority') && (
-                        <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                          e-Courts
-                        </span>
-                      )}
-                    </label>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="text-xs font-medium text-muted-foreground">Issuing Authority</label>
+                      {renderFieldStatusBadge('issuingAuthority', issuingAuthority, () => handleVerifyField('issuingAuthority'), () => handleClearField('issuingAuthority', setIssuingAuthority))}
+                    </div>
                     <input
                       type="text"
                       value={issuingAuthority}
-                      onChange={(e) => setIssuingAuthority(e.target.value)}
+                      onChange={(e) => handleFieldChange('issuingAuthority', e.target.value, setIssuingAuthority)}
                       placeholder="e.g. Judicial Magistrate 1st Class"
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all"
+                      className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('issuingAuthority', issuingAuthority)}`}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground flex items-center justify-between mb-1">
-                    <span>Offense / Legal Sections (IPC / BNS / NI Act)</span>
-                    {importedFromECourts && importedFields.has('offenseCharges') && (
-                      <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700/60">
-                        e-Courts
-                      </span>
-                    )}
-                  </label>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Offense / Legal Sections (IPC / BNS / NI Act)
+                    </label>
+                    {renderFieldStatusBadge('offenseCharges', offenseCharges, () => handleVerifyField('offenseCharges'), () => handleClearField('offenseCharges', setOffenseCharges))}
+                  </div>
                   <input
                     type="text"
                     value={offenseCharges}
-                    onChange={(e) => setOffenseCharges(e.target.value)}
+                    onChange={(e) => handleFieldChange('offenseCharges', e.target.value, setOffenseCharges)}
                     placeholder="e.g. Under Section 138 NI Act / 420 IPC"
-                    className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${
-                      importedFromECourts && importedFields.has('offenseCharges')
-                        ? 'border-emerald-500/60 bg-emerald-500/[0.02]'
-                        : 'border-border'
-                    }`}
+                    className={`w-full bg-background border rounded-xl px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary-text focus:ring-1 focus:ring-primary-text/40 transition-all ${getFieldInputClass('offenseCharges', offenseCharges)}`}
                   />
                 </div>
               </div>
@@ -1711,10 +2369,20 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
         />
       )}
 
+      {/* Hidden recovery file input for unreadable document fast path */}
+      <input
+        type="file"
+        ref={recoveryFileInputRef}
+        accept="image/*,application/pdf"
+        className="hidden"
+        onChange={handleSelectPhotoForScanner}
+      />
+
       {/* Dedicated Mobile Full-Screen Camera Document Scanner: mounts ONLY when opened */}
       {isFullScreenScannerOpen && (
         <DocumentCameraScanner
           isOpen={isFullScreenScannerOpen}
+          sessionScanId={currentScanSessionId}
           onClose={() => {
             setIsFullScreenScannerOpen(false);
             setScannerInitialImage(null);
@@ -1730,13 +2398,14 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
       {isQrModalOpen && (
         <JudicialQrScannerModal
           isOpen={isQrModalOpen}
+          sessionScanId={currentScanSessionId}
           onClose={() => setIsQrModalOpen(false)}
-          onUseCaseDetails={(caseData, rawPayload) => {
-            handleApplyCaseDetails(caseData, rawPayload);
+          onUseCaseDetails={(caseData, rawPayload, sessionId) => {
+            handleApplyCaseDetails(caseData, rawPayload, sessionId);
           }}
-          onScanSuccess={(payload) => {
+          onScanSuccess={(payload, sessionId) => {
             setIsQrModalOpen(false);
-            handleDecodedQr(payload);
+            handleDecodedQr(payload, sessionId);
           }}
           onManualEntryFallback={() => {
             setIsQrModalOpen(false);

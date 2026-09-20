@@ -261,62 +261,62 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] text-muted-foreground block mb-1">Full Officer Name</label>
+                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Full Officer Name</label>
                 <input
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-primary-text focus:outline-none"
+                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-muted-foreground block mb-1">Badge Number</label>
+                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Badge Number</label>
                 <input
                   type="text"
                   value={badgeNumber}
                   onChange={(e) => setBadgeNumber(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground font-mono focus:border-primary-text focus:outline-none"
+                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] text-muted-foreground block mb-1">Rank / Designation</label>
+                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Rank / Designation</label>
                 <input
                   type="text"
                   value={rank}
                   onChange={(e) => setRank(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-primary-text focus:outline-none"
+                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] text-muted-foreground block mb-1">Police Station</label>
+                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Police Station</label>
                 <input
                   type="text"
                   value={policeStation}
                   onChange={(e) => setPoliceStation(e.target.value)}
-                  className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-primary-text focus:outline-none"
+                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
                 />
               </div>
             </div>
 
             <div>
-              <label className="text-[11px] text-muted-foreground block mb-1">District / Jurisdiction</label>
+              <label className="text-[11px] font-medium text-foreground-alt block mb-1">District / Jurisdiction</label>
               <input
                 type="text"
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
-                className="w-full bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:border-primary-text focus:outline-none"
+                className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
               />
             </div>
 
             <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="px-4 py-2 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                className="px-4 py-2.5 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5" /> Save Profile
               </button>
@@ -325,7 +325,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
           {/* App Rating & Feedback Section */}
           <div className="border-t border-border pt-4">
-            <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-2.5">
+            <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl space-y-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
@@ -334,13 +334,13 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                 <span className="text-[10px] text-muted-foreground font-mono">v1.0.0</span>
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Rate your field experience with Summons Mitra or submit operational suggestions to judicial engineering.
+                Rate your field experience with SummonsMitra or submit operational suggestions to judicial engineering.
               </p>
               <button
                 type="button"
                 id="review-my-app-btn"
                 onClick={() => setIsReviewModalOpen(true)}
-                className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
+                className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
               >
                 <Star className="w-3.5 h-3.5 fill-white" />
                 Review My App

@@ -1,3 +1,10 @@
+export const DEFAULT_CONFIDENCE_THRESHOLD = 0.75;
+
+export interface ExtractedFieldItem {
+  value: string;
+  confidence: number;
+}
+
 export interface ExtractedSummonData {
   summonNumber: string;
   caseNumber: string;
@@ -16,6 +23,7 @@ export interface ExtractedSummonData {
   offenseCharges?: string;
   urgency?: 'Standard' | 'High' | 'Urgent';
   detectedFields?: string[];
+  fieldMetadata?: Record<string, ExtractedFieldItem>;
 }
 
 export interface OcrResult {
@@ -23,6 +31,9 @@ export interface OcrResult {
   success: boolean;
   message?: string;
   isAutofilled: boolean;
+  sessionId?: string;
+  isUnreadable?: boolean;
+  overallConfidence?: number;
 }
 
 // Safely converts Indian court date patterns (DD/MM/YYYY, DD-MM-YYYY) into HTML5 YYYY-MM-DD standard
@@ -137,6 +148,25 @@ export const parseSummonTextStrict = (rawText: string): ExtractedSummonData => {
   ]);
   if (authority) detected.push('issuingAuthority');
 
+  const metadata: Record<string, ExtractedFieldItem> = {};
+  detected.forEach((fieldKey) => {
+    metadata[fieldKey] = {
+      value: (fieldKey === 'summonNumber' ? summonNo :
+              fieldKey === 'caseNumber' ? caseNo :
+              fieldKey === 'personName' ? name :
+              fieldKey === 'fatherName' ? (father || '') :
+              fieldKey === 'address' ? addr :
+              fieldKey === 'courtName' ? court :
+              fieldKey === 'courtAddress' ? courtAddr :
+              fieldKey === 'policeStation' ? ps :
+              fieldKey === 'district' ? dist :
+              fieldKey === 'hearingDate' ? normalizedHearing :
+              fieldKey === 'issuingAuthority' ? authority :
+              fieldKey === 'offenseCharges' ? charges : ''),
+      confidence: 0.82,
+    };
+  });
+
   return {
     summonNumber: summonNo,
     caseNumber: caseNo,
@@ -154,6 +184,7 @@ export const parseSummonTextStrict = (rawText: string): ExtractedSummonData => {
     offenseCharges: charges,
     urgency: 'Standard',
     detectedFields: detected,
+    fieldMetadata: metadata,
   };
 };
 
@@ -245,13 +276,26 @@ export const inspectOcrHealth = async (): Promise<{
   }
 };
 
-// Main AI Document OCR Scanner with real error reporting and timeout protection
+// Main AI Document OCR Scanner with real error reporting, session tracking, signal cancellation and timeout protection
 export const scanSummonDocument = async (
   base64Data: string,
-  mimeType: string
+  mimeType: string,
+  sessionId?: string,
+  externalSignal?: AbortSignal
 ): Promise<OcrResult> => {
   const startTime = Date.now();
-  console.info(`[OCR Client] Initiating document scan (${mimeType})...`);
+  console.info(`[OCR Client] Initiating document scan (${mimeType}, session=${sessionId || 'n/a'})...`);
+
+  if (externalSignal?.aborted) {
+    return {
+      sessionId,
+      success: false,
+      isAutofilled: false,
+      isUnreadable: true,
+      message: 'Scan cancelled.',
+      data: parseSummonTextStrict(''),
+    };
+  }
 
   // Optimize high-resolution mobile camera captures before transmission
   let payloadDataUrl = base64Data;
@@ -264,121 +308,155 @@ export const scanSummonDocument = async (
     console.warn('[OCR Client] Image optimization skipped:', optErr);
   }
 
-  // 45-second timeout controller for mobile cellular network resilience
+  // Combined timeout and external abort controller
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error('Timeout')), 120000);
+  const timeoutId = setTimeout(() => controller.abort(new Error('Timeout')), 45000);
+
+  const abortListener = () => {
+    controller.abort(new Error('Cancelled'));
+  };
+
+  if (externalSignal) {
+    externalSignal.addEventListener('abort', abortListener, { once: true });
+  }
 
   try {
     const res = await fetch('/api/ocr', {
       credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: payloadDataUrl, mimeType: payloadMime }),
+      body: JSON.stringify({ image: payloadDataUrl, mimeType: payloadMime, sessionId }),
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', abortListener);
+    }
 
     console.info(`[OCR Client] Received response: HTTP ${res.status} in ${Date.now() - startTime}ms`);
 
     if (res.ok) {
       const data = await res.json();
-      if (data && (data.summonNumber || data.personName || data.caseNumber || data.address || data.courtName)) {
-        const detected: string[] = [];
-        if (data.summonNumber) detected.push('summonNumber');
-        if (data.caseNumber) detected.push('caseNumber');
-        if (data.personName) detected.push('personName');
-        if (data.fatherName) detected.push('fatherName');
-        if (data.address) detected.push('address');
-        if (data.courtName) detected.push('courtName');
-        if (data.courtAddress) detected.push('courtAddress');
-        if (data.policeStation) detected.push('policeStation');
-        if (data.district) detected.push('district');
-        if (data.hearingDate) detected.push('hearingDate');
-        if (data.offenseCharges) detected.push('offenseCharges');
-        if (data.issuingAuthority) detected.push('issuingAuthority');
+      const responseSessionId = data.sessionId || sessionId;
 
+      // Extract raw or structured fields safely
+      const structuredFields = data.fields || {};
+      const getFieldValAndConf = (key: string, fallbackVal?: string): { value: string; confidence: number } => {
+        let val = '';
+        let conf = 0;
+
+        if (structuredFields[key]) {
+          const rawV = structuredFields[key].value;
+          if (rawV !== null && rawV !== undefined && rawV !== 'null' && rawV !== 'Not detected' && rawV !== 'not detected') {
+            val = String(rawV).trim();
+          }
+          if (typeof structuredFields[key].confidence === 'number') {
+            conf = Math.min(1.0, Math.max(0.0, structuredFields[key].confidence));
+          }
+        }
+
+        if (!val && fallbackVal && fallbackVal !== 'null' && fallbackVal !== 'Not detected') {
+          val = String(fallbackVal).trim();
+          if (conf === 0 && val) conf = 0.85;
+        }
+
+        // Sanitize any hallucinations or unreadable indicators
+        if (val === 'null' || val === 'undefined' || val.toLowerCase() === 'not detected' || val.toLowerCase() === 'n/a' || val.toLowerCase() === 'none') {
+          val = '';
+          conf = 0;
+        }
+
+        return { value: val, confidence: val ? conf : 0 };
+      };
+
+      const fieldMap: Record<string, { value: string; confidence: number }> = {
+        summonNumber: getFieldValAndConf('summonNumber', data.summonNumber),
+        caseNumber: getFieldValAndConf('caseNumber', data.caseNumber),
+        personName: getFieldValAndConf('personName', data.personName),
+        fatherName: getFieldValAndConf('fatherName', data.fatherName),
+        address: getFieldValAndConf('address', data.address),
+        courtName: getFieldValAndConf('courtName', data.courtName),
+        courtAddress: getFieldValAndConf('courtAddress', data.courtAddress),
+        policeStation: getFieldValAndConf('policeStation', data.policeStation),
+        district: getFieldValAndConf('district', data.district),
+        state: getFieldValAndConf('state', data.state || 'Delhi NCT'),
+        issueDate: getFieldValAndConf('issueDate', normalizeJudicialDate(data.issueDate)),
+        hearingDate: getFieldValAndConf('hearingDate', normalizeJudicialDate(data.hearingDate)),
+        issuingAuthority: getFieldValAndConf('issuingAuthority', data.issuingAuthority),
+        officerDetails: getFieldValAndConf('officerDetails', data.officerDetails),
+        offenseCharges: getFieldValAndConf('offenseCharges', data.offenseCharges),
+        urgency: getFieldValAndConf('urgency', data.urgency),
+      };
+
+      const detected: string[] = [];
+      const fieldMetadata: Record<string, ExtractedFieldItem> = {};
+      let totalConfidenceSum = 0;
+
+      Object.entries(fieldMap).forEach(([k, item]) => {
+        if (item.value && item.value.trim().length > 0) {
+          detected.push(k);
+          fieldMetadata[k] = {
+            value: item.value,
+            confidence: item.confidence > 0 ? item.confidence : 0.85,
+          };
+          totalConfidenceSum += fieldMetadata[k].confidence;
+        }
+      });
+
+      const hasLegitimateData = detected.length > 0 && Boolean(fieldMap.summonNumber.value || fieldMap.personName.value || fieldMap.caseNumber.value || fieldMap.courtName.value);
+      const isExplicitlyUnreadable = data.isReadable === false || (!hasLegitimateData && (!data.rawText || data.rawText.trim().length === 0));
+
+      if (isExplicitlyUnreadable || !hasLegitimateData) {
         return {
-          success: true,
-          isAutofilled: detected.length > 0,
-          message: `AI OCR successfully identified ${detected.length} warrant particulars.`,
-          data: {
-            summonNumber: data.summonNumber || '',
-            caseNumber: data.caseNumber || '',
-            personName: data.personName || '',
-            fatherName: data.fatherName || '',
-            address: data.address || '',
-            courtName: data.courtName || '',
-            courtAddress: data.courtAddress || '',
-            policeStation: data.policeStation || '',
-            district: data.district || '',
-            state: data.state || 'Delhi NCT',
-            issueDate: normalizeJudicialDate(data.issueDate) || new Date().toISOString().split('T')[0],
-            hearingDate: normalizeJudicialDate(data.hearingDate) || '',
-            issuingAuthority: data.issuingAuthority || '',
-            officerDetails: data.officerDetails || '',
-            offenseCharges: data.offenseCharges || '',
-            urgency: data.urgency === 'Urgent' || data.urgency === 'High' ? data.urgency : 'Standard',
-            detectedFields: detected,
-          },
-        };
-      } else if (data && data.rawText) {
-        // If raw text was returned
-        const parsed = parseSummonTextStrict(data.rawText);
-        const hasDetected = (parsed.detectedFields?.length || 0) > 0;
-        return {
-          success: hasDetected,
-          isAutofilled: hasDetected,
-          message: hasDetected
-            ? 'Extracted particulars from document text analysis.'
-            : "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
-          data: parsed,
-        };
-      } else {
-        return {
+          sessionId: responseSessionId,
           success: false,
           isAutofilled: false,
-          message: "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
+          isUnreadable: true,
+          message: 'Unable to read this document.',
           data: parseSummonTextStrict(''),
         };
       }
+
+      const avgConfidence = detected.length > 0 ? totalConfidenceSum / detected.length : 0;
+
+      return {
+        sessionId: responseSessionId,
+        success: true,
+        isAutofilled: detected.length > 0,
+        isUnreadable: false,
+        overallConfidence: avgConfidence,
+        message: `Extracted ${detected.length} fields from document.`,
+        data: {
+          summonNumber: fieldMap.summonNumber.value,
+          caseNumber: fieldMap.caseNumber.value,
+          personName: fieldMap.personName.value,
+          fatherName: fieldMap.fatherName.value || undefined,
+          address: fieldMap.address.value,
+          courtName: fieldMap.courtName.value,
+          courtAddress: fieldMap.courtAddress.value,
+          policeStation: fieldMap.policeStation.value,
+          district: fieldMap.district.value,
+          state: fieldMap.state.value || 'Delhi NCT',
+          issueDate: fieldMap.issueDate.value || new Date().toISOString().split('T')[0],
+          hearingDate: fieldMap.hearingDate.value || '',
+          issuingAuthority: fieldMap.issuingAuthority.value || undefined,
+          officerDetails: fieldMap.officerDetails.value || undefined,
+          offenseCharges: fieldMap.offenseCharges.value || undefined,
+          urgency: (fieldMap.urgency.value === 'Urgent' || fieldMap.urgency.value === 'High') ? fieldMap.urgency.value : 'Standard',
+          detectedFields: detected,
+          fieldMetadata,
+        },
+      };
     } else {
       const errJson = await res.json().catch(() => ({}));
       console.error(`[OCR Client] Server error HTTP ${res.status}:`, errJson);
 
-      let errorMessage = errJson.error;
-      if (typeof errorMessage === 'string' && errorMessage.includes('{') && errorMessage.includes('}')) {
-        try {
-          const start = errorMessage.indexOf('{');
-          const end = errorMessage.lastIndexOf('}');
-          if (start !== -1 && end !== -1) {
-            const parsed = JSON.parse(errorMessage.slice(start, end + 1));
-            if (parsed?.error?.message) {
-              errorMessage = parsed.error.message;
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (!errorMessage) {
-        if (res.status === 401 || res.status === 403) {
-          errorMessage = 'Authentication issue: Gemini API key unauthorized or expired on server.';
-        } else if (res.status === 404) {
-          errorMessage = 'OCR API endpoint was not found (/api/ocr). Please verify server deployment.';
-        } else if (res.status === 413) {
-          errorMessage = 'Document image is too large for upload. Please capture or select a lower resolution image.';
-        } else if (res.status === 429) {
-          errorMessage = 'AI service rate limit reached. Please wait a moment and retry.';
-        } else if (res.status === 503) {
-          errorMessage = 'AI document extraction service is temporarily unavailable or experiencing high demand. Please retry in a few moments.';
-        } else {
-          errorMessage = `AI OCR server returned status ${res.status}. Please check document details manually.`;
-        }
-      }
-
       return {
+        sessionId: errJson.sessionId || sessionId,
         success: false,
         isAutofilled: false,
-        message: errorMessage,
+        isUnreadable: true,
+        message: 'Unable to read this document.',
         data: parseSummonTextStrict(''),
       };
     }
@@ -396,19 +474,14 @@ export const scanSummonDocument = async (
     }
 
     return {
+      sessionId,
       success: false,
       isAutofilled: false,
+      isUnreadable: true,
       message: failMessage,
       data: parseSummonTextStrict(''),
     };
   }
-
-  return {
-    success: false,
-    isAutofilled: false,
-    message: "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
-    data: parseSummonTextStrict(''),
-  };
 };
 
 // Parse judicial QR code payload (handles e-Courts URLs, JSON, key-value pairs, raw CNR, and text blocks)

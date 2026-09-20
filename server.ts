@@ -905,12 +905,13 @@ async function startServer() {
   app.post('/api/ocr', async (req, res) => {
     const startTime = Date.now();
     try {
-      const { image, mimeType } = req.body || {};
+      const { image, mimeType, sessionId } = req.body || {};
 
       if (!image) {
         return res.status(400).json({
           error: 'Missing document image or PDF payload. Please provide a base64 encoded document.',
           code: 'MISSING_PAYLOAD',
+          sessionId,
         });
       }
 
@@ -920,6 +921,7 @@ async function startServer() {
         return res.status(503).json({
           error: 'Gemini API key is not configured on the server. Please set GEMINI_API_KEY.',
           code: 'API_KEY_NOT_CONFIGURED',
+          sessionId,
         });
       }
 
@@ -961,27 +963,56 @@ async function startServer() {
           },
         },
       });
-      const prompt = `You are an expert legal document analyst and certified OCR extraction assistant specialized in judicial warrants, court summons, notices, and charge sheets.
-Analyze this court summon or warrant document image or PDF and extract all factual legal particulars into this exact JSON structure:
+      const prompt = `You are a certified forensic judicial OCR extraction engine for Indian court summons, warrants, and legal notices.
+
+CRITICAL INTEGRITY DIRECTIVE - ZERO HALLUCINATION POLICY:
+1. NEVER INVENT, GUESS, OR FABRICATE ANY LEGAL DATA.
+2. Do NOT extrapolate or assume missing Case Numbers, CNR codes, Court Complex names, Judge designations, Party/Witness/Accused names, Police Station names, Hearing dates, Sections, or Addresses.
+3. If any field is NOT clearly legible, blurry, cropped, obstructed, or absent in the image, return its value as null or "" with confidence 0.0.
+4. If a field is partially visible or ambiguous, extract only what is physically readable and assign an accurate, lower confidence score (e.g., 0.40 - 0.65).
+5. For crisp, unambiguous, directly printed text, assign high confidence (0.85 - 0.99).
+6. If the entire image is too blurry, dark, rotated unreadably, blank, or not a legal summon/warrant, set "isReadable": false and all field confidences to 0.0.
+
+Return the extraction in this EXACT JSON structure:
 {
-  "summonNumber": "string (summon, warrant, notice, or CNR number found in the document, or empty string)",
-  "caseNumber": "string (FIR number, case number, or CC number found in the document, or empty string)",
-  "personName": "string (name of person summoned / respondent / accused as printed, or empty string)",
-  "fatherName": "string (father or spouse name if mentioned, or empty string)",
-  "address": "string (complete address with house/flat, street, area, landmark, pincode as written, or empty string)",
-  "courtName": "string (name of the court / bench / judge, or empty string)",
-  "courtAddress": "string (court complex location and room number, or empty string)",
-  "policeStation": "string (police station jurisdiction if mentioned, or empty string)",
-  "district": "string (district name if mentioned, or empty string)",
-  "state": "string (state name if mentioned, or empty string)",
-  "issueDate": "string (issue date in YYYY-MM-DD format if present, or empty string)",
-  "hearingDate": "string (court appearance / hearing date in YYYY-MM-DD format, or empty string)",
-  "issuingAuthority": "string (designation of Judge, Magistrate, or Officer, or empty string)",
-  "officerDetails": "string (assigned serving officer if mentioned, or empty string)",
-  "offenseCharges": "string (legal IPC/BNS/CrPC/NI Act sections or charges summary, or empty string)",
-  "urgency": "Standard, High, or Urgent based on timeline and nature of offense"
+  "isReadable": true or false,
+  "documentType": "Court Summon | Bailable Warrant | Non-Bailable Warrant | Notice | Unknown",
+  "fields": {
+    "summonNumber": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "caseNumber": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "personName": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "fatherName": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "address": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "courtName": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "courtAddress": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "policeStation": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "district": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "state": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "issueDate": { "value": "YYYY-MM-DD or null", "confidence": number between 0.0 and 1.0 },
+    "hearingDate": { "value": "YYYY-MM-DD or null", "confidence": number between 0.0 and 1.0 },
+    "issuingAuthority": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "officerDetails": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "offenseCharges": { "value": "string or null", "confidence": number between 0.0 and 1.0 },
+    "urgency": { "value": "Standard | High | Urgent", "confidence": number between 0.0 and 1.0 }
+  },
+  "summonNumber": "string or empty",
+  "caseNumber": "string or empty",
+  "personName": "string or empty",
+  "fatherName": "string or empty",
+  "address": "string or empty",
+  "courtName": "string or empty",
+  "courtAddress": "string or empty",
+  "policeStation": "string or empty",
+  "district": "string or empty",
+  "state": "string or empty",
+  "issueDate": "string or empty",
+  "hearingDate": "string or empty",
+  "issuingAuthority": "string or empty",
+  "officerDetails": "string or empty",
+  "offenseCharges": "string or empty",
+  "urgency": "Standard"
 }
-IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegible in the document, set it to an empty string "". Never invent fictional names or addresses.`;
+IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the JSON.`;
 
       // High-availability candidate models per Gemini SDK specification
       const candidateModels = [
@@ -1047,13 +1078,13 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
       if (jsonMatch) {
         try {
           const parsed = JSON.parse(jsonMatch[0]);
-          return res.status(200).json(parsed);
+          return res.status(200).json({ ...parsed, sessionId });
         } catch (jsonParseErr) {
           console.warn('[OCR Service] JSON parse error on matched block, returning rawText payload:', jsonParseErr);
-          return res.status(200).json({ rawText });
+          return res.status(200).json({ rawText, sessionId });
         }
       } else {
-        return res.status(200).json({ rawText });
+        return res.status(200).json({ rawText, sessionId });
       }
     } catch (err: any) {
       console.error('[OCR Service] Server-side OCR exception:', err);
@@ -1086,6 +1117,7 @@ IMPORTANT: Return ONLY valid JSON. If any field cannot be verified or is illegib
       const statusCode = isAuthError ? 401 : isHighDemand ? 503 : 500;
 
       return res.status(statusCode).json({
+        sessionId: req.body?.sessionId,
         error: isAuthError
           ? 'Gemini API authentication failed. Check API key configuration.'
           : isHighDemand

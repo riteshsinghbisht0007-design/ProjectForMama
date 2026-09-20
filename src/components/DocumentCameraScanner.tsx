@@ -25,6 +25,7 @@ import { scanSummonDocument, parseJudicialQRCode, OcrResult } from '../utils/ocr
 import { scanQrFromCanvas } from '../utils/qrDecoder';
 
 export interface ScanResultData {
+  scanSessionId: string;
   originalDataUrl: string;
   croppedDataUrl: string;
   croppedBlob: Blob;
@@ -40,7 +41,15 @@ interface DocumentCameraScannerProps {
   onScanComplete: (result: ScanResultData) => void;
   initialImageSrc?: string | null;
   initialFileName?: string;
+  sessionScanId?: string;
 }
+
+const generateScanSessionId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `scan_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+};
 
 export type ScannerPhase =
   | 'scannerClosed'
@@ -72,7 +81,11 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
   onScanComplete,
   initialImageSrc,
   initialFileName,
+  sessionScanId,
 }) => {
+  const activeSessionIdRef = useRef<string>(sessionScanId || generateScanSessionId());
+  const ocrAbortControllerRef = useRef<AbortController | null>(null);
+
   // Overall workflow phase following user state machine
   const [phase, setPhase] = useState<ScannerPhase>(
     isOpen ? (initialImageSrc ? 'cropping' : 'scannerOpening') : 'scannerClosed'
@@ -116,6 +129,10 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
 
   // Helper to completely release camera hardware and LED
   const stopCameraStream = useCallback(() => {
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+      ocrAbortControllerRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         try {
@@ -182,13 +199,13 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
     setIsCameraReady(false);
 
     if (typeof window !== 'undefined' && !window.isSecureContext) {
-      setCameraError('Camera access requires HTTPS or localhost. Please upload a photo instead.');
+      setCameraError('Camera access is required for live scanning. Please upload a photo instead.');
       setIsCameraStarting(false);
       return;
     }
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraError('Camera API is not supported on this browser. Please upload a photo instead.');
+      setCameraError('Camera access is required for live scanning. Camera API is not supported on this browser. Please upload a photo instead.');
       setIsCameraStarting(false);
       return;
     }
@@ -220,13 +237,13 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
         setIsCameraStarting(false);
         setIsCameraReady(false);
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          setCameraError('Camera permission was denied. Please allow camera permissions in your browser settings.');
+          setCameraError('Camera access is required for live scanning.');
         } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
           setCameraError('No camera found on this device.');
         } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
           setCameraError('Camera is already in use by another application or browser tab.');
         } else {
-          setCameraError(err.message || 'Unable to access camera on this device.');
+          setCameraError(err.message || 'Camera access is required for live scanning.');
         }
         return;
       }
@@ -284,16 +301,20 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
 
     if (initialImageSrc) {
       // Direct upload mode -> go directly to crop step without activating camera hardware
+      const sId = sessionScanId || generateScanSessionId();
+      activeSessionIdRef.current = sId;
       setOriginalDataUrl(initialImageSrc);
       setCropSourceUrl(initialImageSrc);
       setWorkingFileName(initialFileName || `Judicial_Summon_${Date.now()}.jpg`);
       setPhase('cropping');
     } else {
       // Default to live camera: scannerClosed -> scannerOpening -> cameraActive
+      const sId = sessionScanId || generateScanSessionId();
+      activeSessionIdRef.current = sId;
       setPhase('scannerOpening');
       startCamera('environment');
     }
-  }, [isOpen, initialImageSrc, initialFileName, startCamera, stopCameraStream]);
+  }, [isOpen, initialImageSrc, initialFileName, sessionScanId, startCamera, stopCameraStream]);
 
   // Toggle Torch/Flashlight
   const handleToggleTorch = async () => {
@@ -320,6 +341,10 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
 
   // Capture current camera frame: cameraActive -> captured
   const handleCapture = () => {
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+      ocrAbortControllerRef.current = null;
+    }
     if (!videoRef.current) return;
     const video = videoRef.current;
 
@@ -330,6 +355,10 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
     ) {
       return;
     }
+
+    // Generate fresh session ID for this specific physical document capture
+    const freshSessionId = generateScanSessionId();
+    activeSessionIdRef.current = freshSessionId;
 
     // Shutter flash animation
     setShutterFlash(true);
@@ -359,8 +388,15 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
     setPhase('captured');
   };
 
-  // Retake photo: restart camera stream and reset preview
+  // Retake photo: restart camera stream and reset preview with fresh session
   const handleRetake = () => {
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+      ocrAbortControllerRef.current = null;
+    }
+    const freshSessionId = generateScanSessionId();
+    activeSessionIdRef.current = freshSessionId;
+
     if (initialImageSrc) {
       // In gallery photo mode, let user pick another photo
       fileInputRef.current?.click();
@@ -437,7 +473,16 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+      ocrAbortControllerRef.current = null;
+    }
+
     stopCameraStream();
+
+    // Generate fresh session ID for new gallery file
+    const freshSessionId = generateScanSessionId();
+    activeSessionIdRef.current = freshSessionId;
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -457,6 +502,12 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
   const handleConfirmCropAndScan = async () => {
     if (isExtracting) return; // Prevent double trigger
     if (!cropSourceUrl) return;
+
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+    }
+    const ocrController = new AbortController();
+    ocrAbortControllerRef.current = ocrController;
 
     setIsExtracting(true);
     setPhase('processingOCR');
@@ -557,8 +608,20 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
         type: 'image/jpeg',
       });
 
-      // 3. Execute existing AI OCR pipeline on CROPPED image
-      const ocrResult = await scanSummonDocument(finalCroppedDataUrl, 'image/jpeg');
+      // 3. Execute existing AI OCR pipeline on CROPPED image with session ID and signal
+      const currentSessionId = activeSessionIdRef.current;
+      const ocrResult = await scanSummonDocument(
+        finalCroppedDataUrl,
+        'image/jpeg',
+        currentSessionId,
+        ocrController.signal
+      );
+
+      // Verify that session hasn't been superseded while waiting for OCR
+      if (activeSessionIdRef.current !== currentSessionId) {
+        console.info(`[Camera Scanner] Dropping OCR result from superseded session (${currentSessionId})`);
+        return;
+      }
 
       // 4. Attempt to detect judicial QR code if present in the document
       try {
@@ -589,8 +652,10 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
 
       // Pass comprehensive artifacts back to parent review modal
       setTimeout(() => {
+        if (activeSessionIdRef.current !== currentSessionId) return;
         setIsExtracting(false);
         onScanComplete({
+          scanSessionId: currentSessionId,
           originalDataUrl: originalDataUrl || finalCroppedDataUrl,
           croppedDataUrl: finalCroppedDataUrl,
           croppedBlob: finalCroppedBlob,
@@ -606,8 +671,10 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
       clearTimeout(stepTimer3);
       clearTimeout(stepTimer4);
 
+      const currentSessionId = activeSessionIdRef.current;
       // Fallback empty result so user can still manually review and enter details
       const fallbackResult: OcrResult = {
+        sessionId: currentSessionId,
         data: {
           summonNumber: '',
           caseNumber: '',
@@ -623,7 +690,8 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
           detectedFields: [],
         },
         success: false,
-        message: "Sorry, the photo isn't clear enough to read the summon details. Please retake the photo in good lighting and make sure the document is clearly visible.",
+        isUnreadable: true,
+        message: "Unable to read this document.",
         isAutofilled: false,
       };
 
@@ -632,6 +700,7 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
 
       setIsExtracting(false);
       onScanComplete({
+        scanSessionId: currentSessionId,
         originalDataUrl: originalDataUrl || cropSourceUrl,
         croppedDataUrl: cropSourceUrl,
         croppedBlob: dummyBlob,
@@ -759,8 +828,12 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
                 <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
                   <AlertCircle className="w-8 h-8" />
                 </div>
-                <h3 className="text-base font-bold text-white">Camera Unavailable</h3>
-                <p className="text-xs text-white/80 leading-relaxed">{cameraError}</p>
+                <h3 className="text-base font-bold text-white">Camera Access Notice</h3>
+                <p className="text-xs text-white/80 leading-relaxed">
+                  {cameraError.includes('Camera access is required')
+                    ? 'Camera access is required for live scanning.'
+                    : cameraError}
+                </p>
 
                 <div className="flex flex-col w-full gap-2.5 pt-2">
                   <button
@@ -769,7 +842,7 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
                     className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-all active:scale-98"
                   >
                     <Upload className="w-4 h-4" />
-                    <span>Upload Photo Instead</span>
+                    <span>Upload Image</span>
                   </button>
 
                   <button

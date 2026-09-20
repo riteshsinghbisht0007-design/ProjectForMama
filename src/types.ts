@@ -108,3 +108,37 @@ export interface AppNotification {
   isRead: boolean;
   createdAt: string;
 }
+
+export type ExtractionSource = 'ocr' | 'ecourts' | 'user';
+
+export interface FieldExtractionMeta {
+  field: string;
+  value: string;
+  confidence: number; // 0.00 to 1.00
+  source: ExtractionSource;
+  isVerified: boolean;
+  isModified: boolean;
+}
+
+export interface StructuredOcrField {
+  value: string | null;
+  confidence: number;
+}
+
+export type ExtractedFieldKey =
+  | 'summonNumber'
+  | 'caseNumber'
+  | 'personName'
+  | 'fatherName'
+  | 'address'
+  | 'courtName'
+  | 'courtAddress'
+  | 'policeStation'
+  | 'district'
+  | 'state'
+  | 'issueDate'
+  | 'hearingDate'
+  | 'issuingAuthority'
+  | 'officerDetails'
+  | 'offenseCharges'
+  | 'urgency';

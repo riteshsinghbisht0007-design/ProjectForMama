@@ -226,14 +226,14 @@ export async function lookupJudicialCaseByQr(
       return {
         success: false,
         status: 'TIMEOUT',
-        message: 'Case lookup is taking too long.',
+        message: 'Official case lookup is temporarily unavailable.',
       };
     }
 
     return {
       success: false,
       status: 'NETWORK_ERROR',
-      message: 'Network error connecting to judicial lookup service. Please check your connection.',
+      message: 'Network connection failed. Please try again.',
     };
   }
 }
@@ -302,15 +302,15 @@ export async function lookupCaseByIdentifier(
       return {
         success: false,
         status: 'TIMEOUT',
-        message: 'e-Courts lookup timed out.',
+        message: 'Official case lookup is temporarily unavailable.',
         officialUrl: 'https://services.ecourts.gov.in/',
       };
     }
 
     return {
       success: false,
-      status: 'SOURCE_UNAVAILABLE',
-      message: 'Unable to retrieve case details automatically.',
+      status: 'NETWORK_ERROR',
+      message: 'Network connection failed. Please try again.',
       officialUrl: 'https://services.ecourts.gov.in/',
     };
   }

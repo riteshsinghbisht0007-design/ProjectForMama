@@ -287,7 +287,7 @@ export const ReviewAppModal: React.FC<ReviewAppModalProps> = ({ isOpen, onClose 
                     setFeedback(e.target.value);
                     if (errorMessage) setErrorMessage(null);
                   }}
-                  placeholder="Share your experience using Summons Mitra in the field: summon scanning accuracy, warrant scheduling, court alerts, or suggestions for improvement..."
+                  placeholder="Share your experience using SummonsMitra in the field: summon scanning accuracy, warrant scheduling, court alerts, or suggestions for improvement..."
                   disabled={isSubmitting || isSuccess}
                   maxLength={2000}
                   className="w-full bg-background border border-border rounded-xl p-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary-text focus:outline-none focus:ring-1 focus:ring-primary-btn/30 resize-none transition-all disabled:opacity-60"

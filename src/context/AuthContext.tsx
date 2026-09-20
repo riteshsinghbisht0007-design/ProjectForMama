@@ -17,6 +17,8 @@ interface AuthContextType {
   currentUser: OfficerUser | null;
   isLoading: boolean;
   authError: string | null;
+  isDark: boolean;
+  toggleTheme: () => void;
   loginWithGoogle: () => Promise<void>;
   loginWithGoogleFallback: (email?: string, displayName?: string) => Promise<void>;
   loginWithFacebook: () => Promise<void>;
@@ -46,6 +48,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<OfficerUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  // Theme Management (Light / Dark)
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      if (localStorage.theme === 'dark') return true;
+      if (localStorage.theme === 'light') return false;
+      return document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.theme = 'dark';
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.theme = 'light';
+    }
+  }, [isDark]);
+
+  const toggleTheme = () => {
+    setIsDark((prev) => !prev);
+  };
 
   // Concurrency guard to prevent multiple simultaneous OAuth requests (Requirement 11)
   const isOAuthInProgressRef = useRef<boolean>(false);
@@ -458,6 +484,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentUser,
         isLoading,
         authError,
+        isDark,
+        toggleTheme,
         loginWithGoogle,
         loginWithGoogleFallback,
         loginWithFacebook,
