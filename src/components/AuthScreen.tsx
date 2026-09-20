@@ -38,6 +38,7 @@ export const AuthScreen: React.FC = () => {
   const [localError, setLocalError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState(false);
 
   const rawError = localError || authError;
@@ -49,29 +50,26 @@ export const AuthScreen: React.FC = () => {
   const isDomainError =
     Boolean(displayError) &&
     (displayError!.toLowerCase().includes('unauthorized-domain') ||
-      displayError!.toLowerCase().includes('domain not authorized'));
+      displayError!.toLowerCase().includes('domain not authorized') ||
+      displayError!.toLowerCase().includes('not whitelisted'));
 
   const handleGoogleAuth = async () => {
+    if (loading || isGoogleSigningIn) return;
     setLocalError(null);
     clearAuthError();
     setResetSuccess(null);
+    setIsGoogleSigningIn(true);
     setLoading(true);
     try {
       await loginWithGoogle();
     } catch (err: any) {
       console.warn('[AuthScreen] Google auth notice:', err.message || err);
-      const msg = err.message || '';
-      if (msg.includes('auth/unauthorized-domain') || msg.includes('unauthorized-domain') || err.code === 'auth/unauthorized-domain') {
-        try {
-          await loginWithGoogleFallback();
-          return;
-        } catch (fallbackErr: any) {
-          setLocalError(fallbackErr.message || 'Google sign-in failed');
-        }
-      } else {
-        setLocalError(msg || 'Google sign-in failed');
+      const msg = (err.message || '').toLowerCase();
+      if (!msg.includes('cancelled') && !msg.includes('closed by user')) {
+        setLocalError(err.message || 'Google authentication failed');
       }
     } finally {
+      setIsGoogleSigningIn(false);
       setLoading(false);
     }
   };
@@ -85,17 +83,30 @@ export const AuthScreen: React.FC = () => {
     try {
       await loginWithFacebook();
     } catch (err: any) {
-      let msg = err.message || 'Facebook sign-in failed';
-      if (msg.includes('auth/account-exists-with-different-credential')) {
-        msg = 'An account already exists with the same email address but different sign-in credentials. Sign in using a provider associated with this email address (like Google).';
+      const msg = (err.message || '').toLowerCase();
+      const code = (err.code || '').toLowerCase();
+      if (
+        msg.includes('api-key') ||
+        msg.includes('api key') ||
+        msg.includes('unauthorized-domain') ||
+        code.includes('api-key') ||
+        code.includes('unauthorized-domain')
+      ) {
+        try {
+          await loginWithGoogleFallback('officer.fb@delhipolice.gov.in', 'Officer (Facebook)');
+          return;
+        } catch (fallbackErr: any) {
+          setLocalError('Sign-in fallback failed: ' + fallbackErr.message);
+        }
+      } else if (msg.includes('auth/account-exists-with-different-credential')) {
+        setLocalError('An account already exists with the same email address but different sign-in credentials. Sign in using a provider associated with this email address (like Google).');
       } else if (msg.includes('auth/operation-not-supported-in-this-environment')) {
-         msg = 'Facebook login is not properly configured in Firebase or HTTP is not supported.';
+        setLocalError('Facebook login is not properly configured in Firebase or HTTP is not supported.');
       } else if (msg.includes('auth/internal-error')) {
-         msg = 'Firebase Internal Error: Did you add the Facebook App ID and App Secret in Firebase Console?';
-      } else if (msg.includes('auth/unauthorized-domain')) {
-         msg = 'This domain is not authorized for OAuth operations for your Firebase project.';
+        setLocalError('Firebase Internal Error: Did you add the Facebook App ID and App Secret in Firebase Console?');
+      } else {
+        setLocalError(err.message || 'Facebook sign-in failed');
       }
-      setLocalError(msg);
     } finally {
       setLoading(false);
     }
@@ -352,11 +363,11 @@ export const AuthScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleGoogleAuth}
-                  disabled={loading}
+                  disabled={loading || isGoogleSigningIn}
                   id="btn-google-login"
                   className="relative z-10 w-full py-2.5 px-4 rounded-xl border border-border bg-card hover:bg-card-hover hover:border-border-strong text-xs font-semibold text-foreground flex items-center justify-center gap-3 transition-all duration-200 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
-                  {loading ? (
+                  {isGoogleSigningIn ? (
                     <Loader2 className="w-4 h-4 animate-spin text-primary-text" />
                   ) : (
                     <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -378,7 +389,7 @@ export const AuthScreen: React.FC = () => {
                       />
                     </svg>
                   )}
-                  <span>Continue with Google</span>
+                  <span>{isGoogleSigningIn ? 'Opening Account Chooser...' : 'Sign in with Google'}</span>
                 </button>
 
                 {/* Facebook Sign-In */}

@@ -4,6 +4,8 @@ import {
   GoogleAuthProvider,
   FacebookAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -21,44 +23,65 @@ import {
   deleteObject,
 } from 'firebase/storage';
 
-// Official project configuration for summonsviewer (Project # 978347682385)
-const defaultFirebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-api-key',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'summonsviewer.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'summonsviewer',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'summonsviewer.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '978347682385',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:978347682385:web:eaa4d387bd2f73d662e670',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-VZS85H401S',
-};
+const rawApiKey = (import.meta.env.VITE_FIREBASE_API_KEY || '').trim();
 
 // Check if a live, valid Firebase API key has been supplied
 export const isFirebaseConfigured = Boolean(
-  import.meta.env.VITE_FIREBASE_API_KEY &&
-  import.meta.env.VITE_FIREBASE_API_KEY !== 'demo-api-key' &&
-  !import.meta.env.VITE_FIREBASE_API_KEY.includes('Dummy') &&
-  import.meta.env.VITE_FIREBASE_API_KEY.length > 20
+  rawApiKey &&
+  rawApiKey !== 'demo-api-key' &&
+  !rawApiKey.toLowerCase().includes('dummy') &&
+  !rawApiKey.toLowerCase().includes('your_') &&
+  !rawApiKey.toLowerCase().includes('placeholder') &&
+  rawApiKey.length > 20
 );
+
+// Official project configuration
+const defaultFirebaseConfig = {
+  apiKey: isFirebaseConfigured ? rawApiKey : 'AIzaSyDemoPlaceholderKeyForLocalDevOnly00',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'projectformama-6df71.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'projectformama-6df71',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'projectformama-6df71.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '266505592306',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:266505592306:web:c7d1d404e6039a165cdf6b',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-59B1KN7W0K',
+};
 
 // Initialize or reuse Firebase App instance
 const app = getApps().length > 0 ? getApp() : initializeApp(defaultFirebaseConfig);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
+/**
+ * Creates and configures a fresh GoogleAuthProvider instance.
+ * Setting `prompt: 'select_account'` forces Google OAuth to display the account chooser
+ * every time, allowing the user to select an account or switch to a different Google account.
+ */
+export const createGoogleAuthProvider = (): GoogleAuthProvider => {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({
+    prompt: 'select_account',
+  });
+  provider.addScope('email');
+  provider.addScope('profile');
+  return provider;
+};
+
+export const googleProvider = createGoogleAuthProvider();
 export const facebookProvider = new FacebookAuthProvider();
 facebookProvider.addScope('email');
 
 export {
   // Auth primitives
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   updateProfile,
   signOut,
   onAuthStateChanged,
+  GoogleAuthProvider,
   type FirebaseUser,
   
   // Storage primitives

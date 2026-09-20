@@ -1,5 +1,5 @@
 // Summons Mitra - Firebase Cloud Messaging & Web Push Client Service
-import { auth } from './firebase';
+import { auth, isFirebaseConfigured } from './firebase';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -135,17 +135,19 @@ export async function requestPushPermissionAndSubscribe(): Promise<{
 
     // Also attempt Firebase Messaging token if configured
     let fcmToken: string | undefined;
-    try {
-      const { getMessaging, getToken } = await import('firebase/messaging');
-      const { getApp } = await import('firebase/app');
-      const messaging = getMessaging(getApp());
-      fcmToken = await getToken(messaging, {
-        serviceWorkerRegistration: registration,
-        vapidKey: vapidKey || undefined,
-      });
-      console.info('[Push] Obtained FCM Token successfully');
-    } catch (fcmErr) {
-      console.info('[Push] FCM SDK token deferred, utilizing WebPush subscription:', fcmErr);
+    if (isFirebaseConfigured) {
+      try {
+        const { getMessaging, getToken } = await import('firebase/messaging');
+        const { getApp } = await import('firebase/app');
+        const messaging = getMessaging(getApp());
+        fcmToken = await getToken(messaging, {
+          serviceWorkerRegistration: registration,
+          vapidKey: vapidKey || undefined,
+        });
+        console.info('[Push] Obtained FCM Token successfully');
+      } catch (fcmErr) {
+        console.info('[Push] FCM SDK token deferred, utilizing WebPush subscription:', fcmErr);
+      }
     }
 
     const tokenIdentifier = fcmToken || (subscription ? subscription.endpoint : undefined);
