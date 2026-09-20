@@ -1158,13 +1158,17 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
   };
 
   // Save summon to Firebase / database
-  
   const handleSaveSummon = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return; // Prevent double clicks
     
     setFormError(null);
 
+    // Session validation: block save if session is stale
+    if (!currentScanSessionId || currentScanSessionIdRef.current !== currentScanSessionId) {
+      setFormError('Current document session is no longer active. Please start a new scan.');
+      return;
+    }
 
     // Validation
     if (!summonNumber.trim()) {
