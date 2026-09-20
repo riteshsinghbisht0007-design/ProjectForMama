@@ -83,7 +83,6 @@ export const JudicialQrScannerModal: React.FC<JudicialQrScannerModalProps> = ({
     }
   });
   const [copiedToClipboard, setCopiedToClipboard] = useState<boolean>(false);
-  const [popupBlocked, setPopupBlocked] = useState<boolean>(false);
   const [isProcessingFile, setIsProcessingFile] = useState<boolean>(false);
 
   // References
