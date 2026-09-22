@@ -42,23 +42,15 @@ service cloud.firestore {
     // Validation for Summon record
     function isValidSummon(data) {
       return data.userId is string && data.userId == request.auth.uid &&
-        data.summonNumber is string && data.summonNumber.size() > 0 && data.summonNumber.size() <= 128 &&
-        data.caseNumber is string && data.caseNumber.size() > 0 && data.caseNumber.size() <= 128 &&
-        data.personName is string && data.personName.size() > 0 && data.personName.size() <= 200 &&
-        data.address is string && data.address.size() > 0 && data.address.size() <= 500 &&
-        data.courtName is string && data.courtName.size() > 0 && data.courtName.size() <= 200 &&
-        data.hearingDate is string && data.hearingDate.size() <= 32 &&
-        (!('status' in data) || (data.status in ['Pending', 'Upcoming', 'Completed', 'Served', 'Overdue'])) &&
-        (!('urgency' in data) || (data.urgency in ['Standard', 'High', 'Urgent']));
+        (!('summonNumber' in data) || (data.summonNumber is string && data.summonNumber.size() <= 256)) &&
+        (!('caseNumber' in data) || (data.caseNumber is string && data.caseNumber.size() <= 256)) &&
+        (!('personName' in data) || (data.personName is string && data.personName.size() <= 300));
     }
 
     // Validation for Witness / Person record
     function isValidWitness(data) {
       return data.userId is string && data.userId == request.auth.uid &&
-        data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
-        data.address is string && data.address.size() > 0 && data.address.size() <= 500 &&
-        data.role is string && (data.role in ['Witness', 'Respondent', 'Accused', 'Complainant', 'Surety', 'Other']) &&
-        (!('phone' in data) || (data.phone is string && data.phone.size() <= 50));
+        (!('name' in data) || (data.name is string && data.name.size() <= 300));
     }
 
     // Validation for App Review & Feedback

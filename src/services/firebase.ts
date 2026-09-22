@@ -43,8 +43,13 @@ import {
 } from 'firebase/storage';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
-// Official project configuration loaded from provisioned firebase-applet-config.json
-const rawApiKey = (firebaseConfigJson.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || '').trim();
+// Priority 1: import.meta.env (Render / Custom production build env variables)
+// Priority 2: firebase-applet-config.json (AI Studio provisioned project config)
+const rawApiKey = (
+  (import.meta.env.VITE_FIREBASE_API_KEY as string) ||
+  firebaseConfigJson.apiKey ||
+  ''
+).trim();
 
 // Check if a live, valid Firebase API key has been supplied
 export const isFirebaseConfigured = Boolean(
@@ -58,12 +63,30 @@ export const isFirebaseConfigured = Boolean(
 
 export const defaultFirebaseConfig = {
   apiKey: rawApiKey || 'AIzaSyDemoPlaceholderKeyForLocalDevOnly00',
-  authDomain: firebaseConfigJson.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'yielding-drake-lvxch.firebaseapp.com',
-  projectId: firebaseConfigJson.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || 'yielding-drake-lvxch',
-  storageBucket: firebaseConfigJson.storageBucket || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'yielding-drake-lvxch.firebasestorage.app',
-  messagingSenderId: firebaseConfigJson.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '399137617746',
-  appId: firebaseConfigJson.appId || import.meta.env.VITE_FIREBASE_APP_ID || '1:399137617746:web:b03625b176096da1012c8b',
-  measurementId: firebaseConfigJson.measurementId || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
+  authDomain:
+    (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) ||
+    firebaseConfigJson.authDomain ||
+    'yielding-drake-lvxch.firebaseapp.com',
+  projectId:
+    (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) ||
+    firebaseConfigJson.projectId ||
+    'yielding-drake-lvxch',
+  storageBucket:
+    (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) ||
+    firebaseConfigJson.storageBucket ||
+    'yielding-drake-lvxch.firebasestorage.app',
+  messagingSenderId:
+    (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) ||
+    firebaseConfigJson.messagingSenderId ||
+    '399137617746',
+  appId:
+    (import.meta.env.VITE_FIREBASE_APP_ID as string) ||
+    firebaseConfigJson.appId ||
+    '1:399137617746:web:b03625b176096da1012c8b',
+  measurementId:
+    (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) ||
+    firebaseConfigJson.measurementId ||
+    '',
 };
 
 // Initialize or reuse Firebase App instance
@@ -71,7 +94,9 @@ const app = getApps().length > 0 ? getApp() : initializeApp(defaultFirebaseConfi
 export const auth = getAuth(app);
 
 // Use specified custom Firestore database ID if provided, otherwise default
-const customDbId = firebaseConfigJson.firestoreDatabaseId;
+const customDbId =
+  (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID as string) ||
+  firebaseConfigJson.firestoreDatabaseId;
 export const db = customDbId && customDbId !== '(default)'
   ? getFirestore(app, customDbId)
   : getFirestore(app);
@@ -93,9 +118,21 @@ export const createGoogleAuthProvider = (): GoogleAuthProvider => {
   return provider;
 };
 
+/**
+ * Creates and configures a fresh FacebookAuthProvider instance.
+ */
+export const createFacebookAuthProvider = (): FacebookAuthProvider => {
+  const provider = new FacebookAuthProvider();
+  provider.addScope('email');
+  provider.addScope('public_profile');
+  provider.setCustomParameters({
+    display: 'popup',
+  });
+  return provider;
+};
+
 export const googleProvider = createGoogleAuthProvider();
-export const facebookProvider = new FacebookAuthProvider();
-facebookProvider.addScope('email');
+export const facebookProvider = createFacebookAuthProvider();
 
 export {
   // Auth primitives

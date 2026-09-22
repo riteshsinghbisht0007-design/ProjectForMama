@@ -109,10 +109,10 @@ function getGeminiApiKey(): string | undefined {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const isProduction = process.env.NODE_ENV === 'production';
 
-  console.info(`[Server] Starting SummonMitra backend in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode...`);
+  console.info(`[Server] Starting SummonMitra backend in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode on port ${PORT}...`);
 
   // --- MongoDB Setup with In-Memory Mock Fallback ---
   
@@ -121,9 +121,9 @@ async function startServer() {
 
   if (process.env.MONGODB_URI) {
     try {
-      console.info('[Server] Connecting to MongoDB...');
+      console.info('[Server] Connecting to MongoDB Atlas / cluster...');
       mongoClient = new MongoClient(process.env.MONGODB_URI, {
-        serverSelectionTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 8000,
         serverApi: {
           version: ServerApiVersion.v1,
           strict: true,
@@ -153,9 +153,17 @@ async function startServer() {
       await safeCreateIndex('notifications', { uniqueKey: 1 }, { unique: true, sparse: true });
       await safeCreateIndex('fcm_tokens', { userId: 1 });
       await safeCreateIndex('fcm_tokens', { token: 1 }, { unique: true, sparse: true });
-    } catch (err) {
-      console.warn('[Server] Failed to connect to MongoDB, falling back to In-Memory DB:', err);
+    } catch (err: any) {
+      if (isProduction) {
+        console.error('[Server:ERROR] Failed to connect to MongoDB in production mode:', err.message || err);
+      } else {
+        console.warn('[Server] Failed to connect to MongoDB, falling back to In-Memory DB:', err.message || err);
+      }
       db = null;
+    }
+  } else {
+    if (isProduction) {
+      console.warn('[Server:WARN] MONGODB_URI environment variable is not defined in production.');
     }
   }
 
@@ -599,13 +607,21 @@ async function startServer() {
   app.get('/api/summons', requireAuth, async (req: any, res: any) => {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      let summons = await db.collection('summons').find({ userId: req.user.uid }).toArray();
+      const userFilter = {
+        $or: [
+          { userId: req.user.uid },
+          { ownerId: req.user.uid },
+          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+        ]
+      };
+      let summons = await db.collection('summons').find(userFilter).toArray();
       
       // Auto-seed starter summons ONLY for demo officer account
       if (summons.length === 0 && (req.user.uid === 'demo-officer-uid' || req.user.email === 'demo@police.gov.in')) {
         const defaultSummons = [
           {
             userId: req.user.uid,
+            ownerId: req.user.uid,
             summonNumber: 'SUM/DEL/2026/0482',
             caseNumber: 'FIR 142/2025 PS Connaught Place',
             personName: 'Rameshwar Dayal Verma',
@@ -630,6 +646,7 @@ async function startServer() {
           },
           {
             userId: req.user.uid,
+            ownerId: req.user.uid,
             summonNumber: 'WNT/DEL/2026/1109',
             caseNumber: 'CC 892/2024 Tis Hazari',
             personName: 'Dr. Sunita Deshmukh',
@@ -654,6 +671,7 @@ async function startServer() {
           },
           {
             userId: req.user.uid,
+            ownerId: req.user.uid,
             summonNumber: 'SUM/DEL/2026/0219',
             caseNumber: 'FIR 98/2025 PS Barakhamba',
             personName: 'Harpreet Singh Batra',
@@ -686,13 +704,13 @@ async function startServer() {
               await db.collection('summons').insertOne(s);
             }
           }
-          summons = await db.collection('summons').find({ userId: req.user.uid }).toArray();
+          summons = await db.collection('summons').find(userFilter).toArray();
         } catch (seedErr) {
           console.warn('[Summons] Auto-seed error:', seedErr);
         }
       }
 
-      res.json(summons.map((s: any) => ({ ...s, id: s._id.toString() })));
+      res.json(summons.map((s: any) => ({ ...s, id: s._id?.toString() || s.id })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -702,9 +720,16 @@ async function startServer() {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      let summon = await db.collection('summons').findOne({ _id: id, userId: req.user.uid });
+      const userFilter = {
+        $or: [
+          { userId: req.user.uid },
+          { ownerId: req.user.uid },
+          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+        ]
+      };
+      let summon = await db.collection('summons').findOne({ _id: id, ...userFilter });
       if (!summon && ObjectId.isValid(id)) {
-        summon = await db.collection('summons').findOne({ _id: new ObjectId(id), userId: req.user.uid });
+        summon = await db.collection('summons').findOne({ _id: new ObjectId(id), ...userFilter });
       }
       if (!summon) {
         return res.status(404).json({ error: 'Summon record not found' });
@@ -718,20 +743,29 @@ async function startServer() {
   app.post('/api/summons', requireAuth, async (req: any, res: any) => {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const summon = { ...req.body, userId: req.user.uid };
+      const docId = req.body.id || req.body._id || ('sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+      const summon = {
+        ...req.body,
+        _id: docId,
+        userId: req.user.uid,
+        ownerId: req.user.uid,
+        updatedAt: req.body.updatedAt || new Date().toISOString()
+      };
       delete summon.id;
-      if (req.body.id) {
-        summon._id = req.body.id;
-        delete summon.id;
-      }
-      await db.collection('summons').insertOne(summon);
+      
+      await db.collection('summons').updateOne(
+        { _id: docId },
+        { $set: summon },
+        { upsert: true }
+      );
+
       // Trigger background push check for upcoming/today hearings
       setTimeout(() => {
         checkAndDispatchHearingNotifications(req.user.uid).catch((e) =>
           console.warn('[Push] Notification check error after create:', e)
         );
       }, 100);
-      res.status(201).json({ ...summon, id: summon._id });
+      res.status(201).json({ ...summon, id: docId });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -741,13 +775,21 @@ async function startServer() {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      const updates = { ...req.body };
+      const updates = { ...req.body, updatedAt: new Date().toISOString() };
       delete updates.id;
       delete updates._id;
       delete updates.userId;
+      delete updates.ownerId;
 
       await db.collection('summons').updateOne(
-        { _id: id, userId: req.user.uid },
+        {
+          _id: id,
+          $or: [
+            { userId: req.user.uid },
+            { ownerId: req.user.uid },
+            ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+          ]
+        },
         { $set: updates }
       );
       // Trigger background push check after updates
@@ -766,8 +808,15 @@ async function startServer() {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      await db.collection('summons').deleteOne({ _id: id, userId: req.user.uid });
-      await db.collection('notifications').deleteMany({ summonsId: id, userId: req.user.uid });
+      await db.collection('summons').deleteOne({
+        _id: id,
+        $or: [
+          { userId: req.user.uid },
+          { ownerId: req.user.uid },
+          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+        ]
+      });
+      await db.collection('notifications').deleteMany({ summonsId: id });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -778,8 +827,15 @@ async function startServer() {
   app.get('/api/witnesses', requireAuth, async (req: any, res: any) => {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const witnesses = await db.collection('witnesses').find({ userId: req.user.uid }).toArray();
-      res.json(witnesses.map((w: any) => ({ ...w, id: w._id.toString() })));
+      const userFilter = {
+        $or: [
+          { userId: req.user.uid },
+          { ownerId: req.user.uid },
+          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+        ]
+      };
+      const witnesses = await db.collection('witnesses').find(userFilter).toArray();
+      res.json(witnesses.map((w: any) => ({ ...w, id: w._id?.toString() || w.id })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -788,13 +844,22 @@ async function startServer() {
   app.post('/api/witnesses', requireAuth, async (req: any, res: any) => {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const witness = { ...req.body, userId: req.user.uid };
-      if (req.body.id) {
-        witness._id = req.body.id;
-        delete witness.id;
-      }
-      await db.collection('witnesses').insertOne(witness);
-      res.status(201).json({ ...witness, id: witness._id });
+      const docId = req.body.id || req.body._id || ('wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+      const witness = {
+        ...req.body,
+        _id: docId,
+        userId: req.user.uid,
+        ownerId: req.user.uid,
+        updatedAt: req.body.updatedAt || new Date().toISOString()
+      };
+      delete witness.id;
+
+      await db.collection('witnesses').updateOne(
+        { _id: docId },
+        { $set: witness },
+        { upsert: true }
+      );
+      res.status(201).json({ ...witness, id: docId });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -804,13 +869,21 @@ async function startServer() {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      const updates = { ...req.body };
+      const updates = { ...req.body, updatedAt: new Date().toISOString() };
       delete updates.id;
       delete updates._id;
       delete updates.userId;
+      delete updates.ownerId;
 
       await db.collection('witnesses').updateOne(
-        { _id: id, userId: req.user.uid },
+        {
+          _id: id,
+          $or: [
+            { userId: req.user.uid },
+            { ownerId: req.user.uid },
+            ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+          ]
+        },
         { $set: updates }
       );
       res.json({ success: true });
@@ -823,7 +896,14 @@ async function startServer() {
     if (!db) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      await db.collection('witnesses').deleteOne({ _id: id, userId: req.user.uid });
+      await db.collection('witnesses').deleteOne({
+        _id: id,
+        $or: [
+          { userId: req.user.uid },
+          { ownerId: req.user.uid },
+          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+        ]
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

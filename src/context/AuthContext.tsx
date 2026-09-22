@@ -3,6 +3,7 @@ import { OfficerUser } from '../types';
 import {
   auth,
   createGoogleAuthProvider,
+  createFacebookAuthProvider,
   googleProvider,
   facebookProvider,
   signInWithPopup,
@@ -101,8 +102,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     try {
-      const { db, doc, getDoc, setDoc } = await import('../services/firebase');
-      if (db) {
+      const fetchProfilePromise = (async (): Promise<OfficerUser> => {
+        const { db, doc, getDoc, setDoc } = await import('../services/firebase');
+        if (!db) return defaultProfile;
         const userDocRef = doc(db, 'users', uid);
         const userDocSnap = await getDoc(userDocRef).catch(() => null);
         if (userDocSnap && userDocSnap.exists()) {
@@ -116,42 +118,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             photoURL: data.photoURL || fbUser.photoURL || null,
           };
         } else {
-          // Initialize user document in Firestore
-          await setDoc(userDocRef, defaultProfile, { merge: true }).catch((err) => {
+          // Initialize user document in Firestore asynchronously without blocking auth state
+          setDoc(userDocRef, defaultProfile, { merge: true }).catch((err) => {
             console.warn('[Auth] Initializing Firestore user profile notice:', err.message || err);
           });
           return defaultProfile;
         }
-      }
+      })();
+
+      // Bound Firestore sync to 2000ms max so an unresponsive Firestore stream never hangs auth
+      const timeoutPromise = new Promise<OfficerUser>((resolve) => {
+        setTimeout(() => resolve(defaultProfile), 2000);
+      });
+
+      return await Promise.race([fetchProfilePromise, timeoutPromise]);
     } catch (fsErr) {
       console.warn('[Auth] Firestore user profile sync notice:', fsErr);
+      return defaultProfile;
     }
-
-    return defaultProfile;
   };
 
   // Firebase onAuthStateChanged as single source of truth for user authentication
   useEffect(() => {
     let isMounted = true;
 
-    // Handle OAuth redirect result if returning from a mobile redirect
+    // Handle OAuth redirect result if returning from a mobile redirect (Google or Facebook)
     if (!redirectProcessedRef.current) {
       redirectProcessedRef.current = true;
       getRedirectResult(auth)
         .then(async (redirectResult) => {
           if (redirectResult && redirectResult.user && isMounted) {
             setIsLoading(true);
+            const providerId =
+              redirectResult.user.providerData[0]?.providerId ||
+              (redirectResult.providerId ? redirectResult.providerId : 'oauth');
+            const providerName = providerId.includes('facebook') ? 'facebook' : 'google';
             const idToken = await redirectResult.user.getIdToken();
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3500);
             await fetch('/api/auth/social', {
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ idToken, provider: 'google' }),
-            }).catch(() => {});
+              body: JSON.stringify({ idToken, provider: providerName }),
+              signal: controller.signal,
+            })
+              .catch(() => {})
+              .finally(() => clearTimeout(timer));
           }
         })
         .catch((redirectErr: any) => {
-          console.warn('[Auth] getRedirectResult notice:', redirectErr.message || redirectErr);
+          console.warn('[Auth] getRedirectResult notice:', redirectErr.code || redirectErr.message || redirectErr);
         });
     }
 
@@ -162,18 +179,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (firebaseUser) {
         setIsLoading(true);
         try {
-          // 1. Sync / load user profile from Firestore under /users/{uid}
+          // 1. Sync / load user profile from Firestore under /users/{uid} (bounded promise)
           const officerProfile = await syncOfficerProfileFromFirestore(firebaseUser);
 
-          // 2. Exchange token with backend server session for API authentication
+          // 2. Exchange token with backend server session for API authentication with bounded timeout
           try {
             const idToken = await firebaseUser.getIdToken();
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3500);
             await fetch('/api/auth/social', {
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ idToken, provider: 'firebase' }),
-            });
+              signal: controller.signal,
+            })
+              .catch((backendErr) => {
+                console.warn('[Auth] Backend session sync note:', backendErr.message || backendErr);
+              })
+              .finally(() => clearTimeout(timer));
           } catch (backendSyncErr) {
             console.warn('[Auth] Backend session sync note:', backendSyncErr);
           }
@@ -193,7 +217,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else {
-        // User is signed out: clear state immediately to prevent leaking any data
+        // When Firebase user is null, verify if an active Department ID / server JWT session exists
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2000);
+          const meRes = await fetch('/api/auth/me', {
+            credentials: 'include',
+            signal: controller.signal,
+          })
+            .catch(() => null)
+            .finally(() => clearTimeout(timer));
+
+          if (meRes && meRes.ok && isMounted) {
+            const meData = await meRes.json().catch(() => null);
+            if (meData && meData.user) {
+              setCurrentUser(meData.user);
+              setIsLoading(false);
+              return;
+            }
+          }
+        } catch (_) {}
+
         if (isMounted) {
           setCurrentUser(null);
           setIsLoading(false);
@@ -370,52 +414,135 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const handleSocialLogin = async (
-    provider: any,
-    providerName: string
-  ) => {
+  /**
+   * Initiates Facebook Sign-In using Firebase FacebookAuthProvider.
+   * - Configures FacebookAuthProvider with email and public_profile scopes
+   * - Clears prior session if needed
+   * - Handles mobile / popup-blocked with redirect flow
+   * - Surfaces clear diagnostic messages for Firebase and Facebook console setups
+   */
+  const loginWithFacebook = async (): Promise<void> => {
+    if (isOAuthInProgressRef.current) {
+      console.warn('[Auth] Facebook OAuth request already in progress. Ignoring repeated click.');
+      return;
+    }
+
+    isOAuthInProgressRef.current = true;
     setIsLoading(true);
     setAuthError(null);
 
     try {
-      const result = await signInWithPopup(auth, provider);
-      const idToken = await result.user.getIdToken();
-      
+      if (auth.currentUser) {
+        try {
+          await firebaseSignOut(auth);
+        } catch (signOutErr) {
+          console.warn('[Auth] Pre-login signOut notice:', signOutErr);
+        }
+      }
+
+      const provider = createFacebookAuthProvider();
+
+      const isMobile =
+        typeof navigator !== 'undefined' &&
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+      let userCredential = null;
+
+      if (isMobile) {
+        console.info('[Auth] Initiating Facebook Sign-In via redirect on mobile');
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+
+      try {
+        console.info('[Auth] Initiating Facebook Sign-In via popup');
+        userCredential = await signInWithPopup(auth, provider);
+      } catch (popupErr: any) {
+        const popupCode = (popupErr.code || '').toLowerCase();
+        const popupMsg = (popupErr.message || '').toLowerCase();
+
+        if (
+          popupCode.includes('popup-blocked') ||
+          popupMsg.includes('popup-blocked') ||
+          popupCode.includes('operation-not-supported')
+        ) {
+          console.warn('[Auth] Popup blocked or unsupported. Falling back to signInWithRedirect for Facebook...');
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+
+        if (popupCode.includes('popup-closed-by-user')) {
+          console.info('[Auth] Facebook Sign-In popup closed by user.');
+          setAuthError('Sign-in cancelled. Please complete Facebook login.');
+          return;
+        }
+
+        if (popupCode.includes('cancelled-popup-request')) {
+          console.info('[Auth] Previous popup request cancelled.');
+          return;
+        }
+
+        throw popupErr;
+      }
+
+      if (!userCredential || !userCredential.user) {
+        throw new Error('No user credentials received from Facebook');
+      }
+
+      const idToken = await userCredential.user.getIdToken();
       const response = await fetch('/api/auth/social', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken, provider: providerName })
+        body: JSON.stringify({ idToken, provider: 'facebook' }),
       });
-      
+
       if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `${providerName} login failed on server`);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to authenticate Facebook session with server');
       }
-      
+
       const data = await response.json();
       setCurrentUser(data.user);
+      setAuthError(null);
     } catch (err: any) {
+      console.warn('[Auth] Facebook authentication error:', err.code || err.message || err);
       const errCode = (err.code || '').toLowerCase();
-      console.warn(`Firebase ${providerName} login notice:`, err.message || err);
-      let errorMessage = err.message || `${providerName} login failed`;
-      
-      if (errCode.includes('popup-closed-by-user')) {
-        errorMessage = 'Login popup was closed before finishing.';
-      } else if (errCode.includes('popup-blocked')) {
-        errorMessage = 'Login popup was blocked by your browser. Please allow popups for this site.';
-      } else if (errCode.includes('cancelled-popup-request')) {
-        errorMessage = 'Login popup request was cancelled.';
+      const errMsg = (err.message || '').toLowerCase();
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'current preview host';
+
+      if (errCode.includes('operation-not-allowed') || errMsg.includes('operation-not-allowed')) {
+        const formattedMsg =
+          'Facebook Login is not enabled in Firebase. Enable Facebook in Firebase Console (Authentication > Sign-in method > Facebook) and add your Meta App ID & Secret.';
+        setAuthError(formattedMsg);
+        throw new Error(formattedMsg);
+      } else if (errCode.includes('unauthorized-domain') || errMsg.includes('unauthorized-domain')) {
+        const formattedMsg = `Firebase Domain Not Whitelisted: Please add "${currentHost}" to Authorized Domains in your Firebase Console (Authentication > Settings > Authorized domains).`;
+        setAuthError(formattedMsg);
+        throw new Error(formattedMsg);
+      } else if (errCode.includes('account-exists-with-different-credential') || errMsg.includes('account-exists-with-different-credential')) {
+        const formattedMsg =
+          'An account already exists with the same email address using a different sign-in provider (such as Google). Please sign in using Google.';
+        setAuthError(formattedMsg);
+        throw new Error(formattedMsg);
+      } else if (errCode.includes('popup-blocked') || errMsg.includes('popup-blocked')) {
+        const formattedMsg = 'Facebook login popup was blocked by your browser. Please allow popups or retry.';
+        setAuthError(formattedMsg);
+        throw new Error(formattedMsg);
+      } else if (errCode.includes('network-request-failed')) {
+        const formattedMsg = 'Network error during Facebook authentication. Please check your internet connection.';
+        setAuthError(formattedMsg);
+        throw new Error(formattedMsg);
+      } else {
+        const formattedMsg = err.message || 'Facebook sign-in failed';
+        setAuthError(formattedMsg);
+        throw new Error(formattedMsg);
       }
-      
-      setAuthError(errorMessage);
-      throw new Error(errorMessage);
     } finally {
+      isOAuthInProgressRef.current = false;
       setIsLoading(false);
     }
   };
-
-  const loginWithFacebook = () => handleSocialLogin(facebookProvider, 'facebook');
 
   const loginWithCredentials = async (
     emailOrBadge: string,

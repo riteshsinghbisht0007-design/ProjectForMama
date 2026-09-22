@@ -13,6 +13,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { defaultFirebaseConfig } from '../services/firebase';
 import { SummonsMitraLogo } from './SummonsMitraLogo';
 
 export const AuthScreen: React.FC = () => {
@@ -76,6 +77,7 @@ export const AuthScreen: React.FC = () => {
 
 
   const handleFacebookAuth = async () => {
+    if (loading) return;
     setLocalError(null);
     clearAuthError();
     setResetSuccess(null);
@@ -83,29 +85,10 @@ export const AuthScreen: React.FC = () => {
     try {
       await loginWithFacebook();
     } catch (err: any) {
-      const msg = (err.message || '').toLowerCase();
-      const code = (err.code || '').toLowerCase();
-      if (
-        msg.includes('api-key') ||
-        msg.includes('api key') ||
-        msg.includes('unauthorized-domain') ||
-        code.includes('api-key') ||
-        code.includes('unauthorized-domain')
-      ) {
-        try {
-          await loginWithGoogleFallback('officer.fb@delhipolice.gov.in', 'Officer (Facebook)');
-          return;
-        } catch (fallbackErr: any) {
-          setLocalError('Sign-in fallback failed: ' + fallbackErr.message);
-        }
-      } else if (msg.includes('auth/account-exists-with-different-credential')) {
-        setLocalError('An account already exists with the same email address but different sign-in credentials. Sign in using a provider associated with this email address (like Google).');
-      } else if (msg.includes('auth/operation-not-supported-in-this-environment')) {
-        setLocalError('Facebook login is not properly configured in Firebase or HTTP is not supported.');
-      } else if (msg.includes('auth/internal-error')) {
-        setLocalError('Firebase Internal Error: Did you add the Facebook App ID and App Secret in Firebase Console?');
-      } else {
-        setLocalError(err.message || 'Facebook sign-in failed');
+      console.warn('[AuthScreen] Facebook auth error:', err.message || err);
+      const msg = err.message || '';
+      if (!msg.toLowerCase().includes('cancelled') && !msg.toLowerCase().includes('closed by user')) {
+        setLocalError(msg || 'Facebook sign-in failed');
       }
     } finally {
       setLoading(false);
@@ -242,31 +225,40 @@ export const AuthScreen: React.FC = () => {
               <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs space-y-2.5">
                 <div className="flex items-center gap-2 text-amber-500 font-semibold">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>Google Sign-In: Domain Whitelist Required</span>
+                  <span>OAuth: Domain Whitelist Required in Firebase</span>
                 </div>
                 <p className="text-muted-foreground leading-relaxed">
-                  Firebase Authentication requires your current preview domain to be registered before Google OAuth can authenticate:
+                  Firebase Authentication requires your current hostname to be registered under Authorized Domains in the connected Firebase project:
                 </p>
-                <div className="p-2 bg-background/80 rounded-lg border border-border flex items-center justify-between gap-2">
-                  <code className="font-mono text-[11px] text-foreground truncate select-all">
-                    {typeof window !== 'undefined' ? window.location.hostname : ''}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (typeof window !== 'undefined') {
-                        navigator.clipboard.writeText(window.location.hostname);
-                        setCopiedDomain(true);
-                        setTimeout(() => setCopiedDomain(false), 2000);
-                      }
-                    }}
-                    className="px-2.5 py-1 rounded bg-secondary hover:bg-muted text-[11px] font-medium text-foreground transition-colors shrink-0 cursor-pointer"
-                  >
-                    {copiedDomain ? 'Copied!' : 'Copy Domain'}
-                  </button>
+                <div className="p-2 bg-background/80 rounded-lg border border-border space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">Domain to Add:</span>
+                    <code className="font-mono text-[11px] text-foreground truncate select-all font-bold">
+                      {typeof window !== 'undefined' ? window.location.hostname : ''}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          navigator.clipboard.writeText(window.location.hostname);
+                          setCopiedDomain(true);
+                          setTimeout(() => setCopiedDomain(false), 2000);
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded bg-secondary hover:bg-muted text-[10px] font-medium text-foreground transition-colors shrink-0 cursor-pointer"
+                    >
+                      {copiedDomain ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                    <span>Connected Firebase Project:</span>
+                    <span className="font-mono text-primary-text font-medium truncate">
+                      {defaultFirebaseConfig.projectId}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  <strong>In Firebase Console:</strong> Authentication → Settings → Authorized domains → Add domain.
+                  <strong>In Firebase Console:</strong> Open project <strong className="text-foreground">{defaultFirebaseConfig.projectId}</strong> → Authentication → Settings → Authorized domains → Add domain.
                 </p>
                 <div className="pt-1.5 border-t border-amber-500/20">
                   <button

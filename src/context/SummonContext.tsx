@@ -40,14 +40,50 @@ const SummonContext = createContext<SummonContextType | undefined>(undefined);
 export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
 
-  const [summons, setSummons] = useState<Summon[]>([]);
+  const currentUid = currentUser?.uid || null;
+
+  // Initialize state from UID-scoped local storage if available for instant hydration
+  const [summons, setSummons] = useState<Summon[]>(() => {
+    if (typeof window !== 'undefined' && currentUid) {
+      try {
+        const cached = localStorage.getItem(`summons_cache_${currentUid}`);
+        if (cached) return JSON.parse(cached);
+      } catch (_) {}
+    }
+    return [];
+  });
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Witnesses state
-  const [witnesses, setWitnesses] = useState<WitnessPerson[]>([]);
+  const [witnesses, setWitnesses] = useState<WitnessPerson[]>(() => {
+    if (typeof window !== 'undefined' && currentUid) {
+      try {
+        const cached = localStorage.getItem(`witnesses_cache_${currentUid}`);
+        if (cached) return JSON.parse(cached);
+      } catch (_) {}
+    }
+    return [];
+  });
   const [isLoadingWitnesses, setIsLoadingWitnesses] = useState<boolean>(true);
 
   const activeUidRef = useRef<string | null>(null);
+
+  // Synchronize UID-scoped local storage cache
+  const saveSummonsCache = useCallback((uid: string, data: Summon[]) => {
+    try {
+      if (typeof window !== 'undefined' && uid) {
+        localStorage.setItem(`summons_cache_${uid}`, JSON.stringify(data));
+      }
+    } catch (_) {}
+  }, []);
+
+  const saveWitnessesCache = useCallback((uid: string, data: WitnessPerson[]) => {
+    try {
+      if (typeof window !== 'undefined' && uid) {
+        localStorage.setItem(`witnesses_cache_${uid}`, JSON.stringify(data));
+      }
+    } catch (_) {}
+  }, []);
 
   // Real-time Firestore synchronization for Summons & Witnesses scoped strictly to currentUser.uid
   useEffect(() => {
@@ -64,18 +100,89 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    const currentUid = currentUser.uid;
-    activeUidRef.current = currentUid;
+    const uid = currentUser.uid;
+    activeUidRef.current = uid;
+
+    // Load from local storage cache first for instant render
+    try {
+      const cachedSummons = localStorage.getItem(`summons_cache_${uid}`);
+      if (cachedSummons) {
+        const parsed = JSON.parse(cachedSummons);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSummons(parsed);
+          setIsLoading(false);
+        }
+      }
+      const cachedWitnesses = localStorage.getItem(`witnesses_cache_${uid}`);
+      if (cachedWitnesses) {
+        const parsedWit = JSON.parse(cachedWitnesses);
+        if (Array.isArray(parsedWit) && parsedWit.length > 0) {
+          setWitnesses(parsedWit);
+          setIsLoadingWitnesses(false);
+        }
+      }
+    } catch (_) {}
+
     setIsLoading(true);
     setIsLoadingWitnesses(true);
 
+    // Initial backend fast-fetch to populate state immediately without waiting on Firestore connection
+    const loadBackendData = async () => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2500);
+        const [summonsRes, witnessesRes] = await Promise.all([
+          fetch('/api/summons', { credentials: 'include', signal: controller.signal }).catch(() => null),
+          fetch('/api/witnesses', { credentials: 'include', signal: controller.signal }).catch(() => null),
+        ]).finally(() => clearTimeout(timer));
+
+        if (!isMounted || activeUidRef.current !== uid) return;
+
+        if (summonsRes && summonsRes.ok) {
+          const apiSummons = await summonsRes.json().catch(() => []);
+          if (Array.isArray(apiSummons) && apiSummons.length > 0) {
+            setSummons((prev) => {
+              const combined = apiSummons;
+              saveSummonsCache(uid, combined);
+              return combined;
+            });
+            setIsLoading(false);
+          }
+        }
+
+        if (witnessesRes && witnessesRes.ok) {
+          const apiWitnesses = await witnessesRes.json().catch(() => []);
+          if (Array.isArray(apiWitnesses) && apiWitnesses.length > 0) {
+            setWitnesses((prev) => {
+              const combined = apiWitnesses;
+              saveWitnessesCache(uid, combined);
+              return combined;
+            });
+            setIsLoadingWitnesses(false);
+          }
+        }
+      } catch (e) {
+        console.warn('[SummonContext] Initial backend fast-fetch notice:', e);
+      }
+    };
+
+    loadBackendData();
+
+    // Safety fallback timer: Ensure loading spinners complete within 2.5s
+    const safetyTimer = setTimeout(() => {
+      if (isMounted && activeUidRef.current === uid) {
+        setIsLoading(false);
+        setIsLoadingWitnesses(false);
+      }
+    }, 2500);
+
     try {
       // 1. Subscribe to real-time Firestore collection: users/{uid}/summons
-      const summonsColRef = collection(db, 'users', currentUid, 'summons');
+      const summonsColRef = collection(db, 'users', uid, 'summons');
       unsubSummons = onSnapshot(
         summonsColRef,
         (snapshot) => {
-          if (!isMounted || activeUidRef.current !== currentUid) return;
+          if (!isMounted || activeUidRef.current !== uid) return;
 
           const loadedSummons: Summon[] = [];
           snapshot.forEach((docSnap) => {
@@ -83,7 +190,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             loadedSummons.push({
               ...(data as Summon),
               id: docSnap.id,
-              userId: currentUid,
+              userId: uid,
             });
           });
 
@@ -94,24 +201,45 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             return timeB - timeA;
           });
 
-          setSummons(loadedSummons);
-          setIsLoading(false);
-
-          // If Firestore summons collection is empty on first load, check if legacy backend has data to migrate
-          if (loadedSummons.length === 0) {
+          if (loadedSummons.length > 0) {
+            setSummons(loadedSummons);
+            saveSummonsCache(uid, loadedSummons);
+            setIsLoading(false);
+          } else {
+            // If Firestore summons is empty, check if backend or cache has data to preserve and migrate
             fetch('/api/summons', { credentials: 'include' })
               .then((res) => (res.ok ? res.json() : []))
               .then(async (legacySummons: Summon[]) => {
-                if (legacySummons && legacySummons.length > 0 && activeUidRef.current === currentUid) {
-                  console.info(`[SummonContext] Migrating ${legacySummons.length} existing summons to Firestore for UID: ${currentUid}`);
-                  for (const s of legacySummons) {
+                if (!isMounted || activeUidRef.current !== uid) return;
+                if (legacySummons && legacySummons.length > 0) {
+                  setSummons(legacySummons);
+                  saveSummonsCache(uid, legacySummons);
+                  console.info(`[SummonContext] Preserved & Migrating ${legacySummons.length} summons to Firestore for UID: ${uid}`);
+                  const migrationPromises = legacySummons.map((s) => {
                     const sId = s.id || ('sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
-                    const docToMigrate = { ...s, id: sId, userId: currentUid };
-                    await setDoc(doc(db, 'users', currentUid, 'summons', sId), docToMigrate, { merge: true }).catch(() => {});
-                  }
+                    const docToMigrate = { ...s, id: sId, userId: uid };
+                    return setDoc(doc(db, 'users', uid, 'summons', sId), docToMigrate, { merge: true }).catch(() => {});
+                  });
+                  await Promise.allSettled(migrationPromises);
+                } else {
+                  // Only if both Firestore and Backend confirm 0 items, check if local cache had anything
+                  setSummons((prev) => {
+                    if (prev.length > 0) {
+                      // Migrate current in-memory items to Firestore
+                      prev.forEach((s) => {
+                        const sId = s.id || ('sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+                        setDoc(doc(db, 'users', uid, 'summons', sId), { ...s, id: sId, userId: uid }, { merge: true }).catch(() => {});
+                      });
+                      return prev;
+                    }
+                    return [];
+                  });
                 }
               })
-              .catch(() => {});
+              .catch(() => {})
+              .finally(() => {
+                if (isMounted) setIsLoading(false);
+              });
           }
         },
         async (error) => {
@@ -119,9 +247,12 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           // Fallback to backend API if Firestore encounters any permission / offline block
           try {
             const res = await fetch('/api/summons', { credentials: 'include' });
-            if (res.ok && isMounted && activeUidRef.current === currentUid) {
+            if (res.ok && isMounted && activeUidRef.current === uid) {
               const data = await res.json();
-              setSummons(data);
+              if (Array.isArray(data) && data.length > 0) {
+                setSummons(data);
+                saveSummonsCache(uid, data);
+              }
             }
           } catch (fetchErr) {
             console.warn('[SummonContext] API fallback error:', fetchErr);
@@ -132,11 +263,11 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
 
       // 2. Subscribe to real-time Firestore collection: users/{uid}/witnesses
-      const witnessesColRef = collection(db, 'users', currentUid, 'witnesses');
+      const witnessesColRef = collection(db, 'users', uid, 'witnesses');
       unsubWitnesses = onSnapshot(
         witnessesColRef,
         (snapshot) => {
-          if (!isMounted || activeUidRef.current !== currentUid) return;
+          if (!isMounted || activeUidRef.current !== uid) return;
 
           const loadedWitnesses: WitnessPerson[] = [];
           snapshot.forEach((docSnap) => {
@@ -144,7 +275,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             loadedWitnesses.push({
               ...(data as WitnessPerson),
               id: docSnap.id,
-              userId: currentUid,
+              userId: uid,
             });
           });
 
@@ -154,16 +285,52 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             return timeB - timeA;
           });
 
-          setWitnesses(loadedWitnesses);
-          setIsLoadingWitnesses(false);
+          if (loadedWitnesses.length > 0) {
+            setWitnesses(loadedWitnesses);
+            saveWitnessesCache(uid, loadedWitnesses);
+            setIsLoadingWitnesses(false);
+          } else {
+            fetch('/api/witnesses', { credentials: 'include' })
+              .then((res) => (res.ok ? res.json() : []))
+              .then(async (legacyWitnesses: WitnessPerson[]) => {
+                if (!isMounted || activeUidRef.current !== uid) return;
+                if (legacyWitnesses && legacyWitnesses.length > 0) {
+                  setWitnesses(legacyWitnesses);
+                  saveWitnessesCache(uid, legacyWitnesses);
+                  const migrationPromises = legacyWitnesses.map((w) => {
+                    const wId = w.id || ('wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+                    return setDoc(doc(db, 'users', uid, 'witnesses', wId), { ...w, id: wId, userId: uid }, { merge: true }).catch(() => {});
+                  });
+                  await Promise.allSettled(migrationPromises);
+                } else {
+                  setWitnesses((prev) => {
+                    if (prev.length > 0) {
+                      prev.forEach((w) => {
+                        const wId = w.id || ('wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+                        setDoc(doc(db, 'users', uid, 'witnesses', wId), { ...w, id: wId, userId: uid }, { merge: true }).catch(() => {});
+                      });
+                      return prev;
+                    }
+                    return [];
+                  });
+                }
+              })
+              .catch(() => {})
+              .finally(() => {
+                if (isMounted) setIsLoadingWitnesses(false);
+              });
+          }
         },
         async (error) => {
           console.warn('[SummonContext] Firestore witnesses listener notice:', error.message || error);
           try {
             const res = await fetch('/api/witnesses', { credentials: 'include' });
-            if (res.ok && isMounted && activeUidRef.current === currentUid) {
+            if (res.ok && isMounted && activeUidRef.current === uid) {
               const data = await res.json();
-              setWitnesses(data);
+              if (Array.isArray(data) && data.length > 0) {
+                setWitnesses(data);
+                saveWitnessesCache(uid, data);
+              }
             }
           } catch (fetchErr) {
             console.warn('[SummonContext] Witnesses API fallback error:', fetchErr);
@@ -180,10 +347,11 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
       if (unsubSummons) unsubSummons();
       if (unsubWitnesses) unsubWitnesses();
     };
-  }, [currentUser]);
+  }, [currentUser, saveSummonsCache, saveWitnessesCache]);
 
   const uploadAttachment = async (
     summonId: string,
@@ -286,6 +454,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // Local state is updated via Firestore onSnapshot, but update immediately for instant responsiveness
     setSummons((prev) => {
       const updated = [newSummon, ...prev.filter((s) => s.id !== summonId)];
+      if (currentUser?.uid) saveSummonsCache(currentUser.uid, updated);
       return updated;
     });
 
@@ -336,6 +505,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setSummons((prev) => {
       const updated = prev.map((s) => (s.id === id ? { ...s, ...updatedRecord } : s));
+      if (currentUser?.uid) saveSummonsCache(currentUser.uid, updated);
       return updated;
     });
   };
@@ -381,6 +551,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setSummons((prev) => {
         const updated = prev.filter((s) => s.id !== id);
+        if (currentUser?.uid) saveSummonsCache(currentUser.uid, updated);
         return updated;
       });
     } catch (err) {
@@ -450,6 +621,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setWitnesses((prev) => {
       const updated = [newWitness, ...prev.filter((w) => w.id !== witnessId)];
+      if (currentUser?.uid) saveWitnessesCache(currentUser.uid, updated);
       return updated;
     });
 
@@ -485,6 +657,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setWitnesses((prev) => {
       const updated = prev.map((w) => (w.id === id ? { ...w, ...updatedRecord } : w));
+      if (currentUser?.uid) saveWitnessesCache(currentUser.uid, updated);
       return updated;
     });
   };
@@ -512,6 +685,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setWitnesses((prev) => {
         const updated = prev.filter((w) => w.id !== id);
+        if (currentUser?.uid) saveWitnessesCache(currentUser.uid, updated);
         return updated;
       });
     } catch (err) {
