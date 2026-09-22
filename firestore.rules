@@ -73,13 +73,55 @@ service cloud.firestore {
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }
 
-    // Officer User Profiles
+    // Officer User Profiles and Account Subcollections
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if false; // Disallow listing user directory to isolate PII
       allow create: if isOwner(userId) && isValidUser(incoming());
       allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().uid == existing().uid;
       allow delete: if false;
+
+      // User's private account-scoped summons collection
+      match /summons/{summonId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && incoming().userId == userId && isValidSummon(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      // User's private account-scoped witnesses directory
+      match /witnesses/{witnessId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && incoming().userId == userId && isValidWitness(incoming());
+        allow delete: if isOwner(userId);
+      }
+
+      // User's private account-scoped reviews & feedback
+      match /reviews/{reviewId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && incoming().userId == userId;
+        allow delete: if isOwner(userId);
+      }
+
+      // User's private notifications & alerts
+      match /notifications/{notificationId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId);
+        allow delete: if isOwner(userId);
+      }
+
+      // User's private settings
+      match /settings/{settingId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId);
+        allow delete: if isOwner(userId);
+      }
+
+      // User's private documents metadata
+      match /documents/{documentId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId);
+        allow delete: if isOwner(userId);
+      }
     }
 
     // Judicial Summons & Warrants

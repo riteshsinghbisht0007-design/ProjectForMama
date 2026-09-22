@@ -169,18 +169,21 @@ export const saveMyReview = async (params: {
     failureReason = 'network-error';
   }
 
-  // 2. Sync to Firestore /reviews/{userId} if active Firebase auth user exists (bounded to 2.5s)
+  // 2. Sync to Firestore /users/{userId}/reviews/{userId} and /reviews/{userId}
   if (db && auth.currentUser?.uid === userId) {
     try {
-      const docRef = doc(db, 'reviews', userId);
-      const firestoreWritePromise = setDoc(
-        docRef,
-        {
-          ...reviewPayload,
-          createdAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const userReviewDocRef = doc(db, 'users', userId, 'reviews', userId);
+      const topReviewDocRef = doc(db, 'reviews', userId);
+      const dataToSave = {
+        ...reviewPayload,
+        createdAt: serverTimestamp(),
+      };
+      
+      const firestoreWritePromise = Promise.all([
+        setDoc(userReviewDocRef, dataToSave, { merge: true }),
+        setDoc(topReviewDocRef, dataToSave, { merge: true }).catch(() => {})
+      ]);
+      
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Firestore write timeout')), 2500)
       );

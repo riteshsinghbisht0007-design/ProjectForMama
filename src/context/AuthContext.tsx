@@ -9,7 +9,9 @@ import {
   signInWithRedirect,
   getRedirectResult,
   signOut as firebaseSignOut,
+  onAuthStateChanged,
   isFirebaseConfigured,
+  type FirebaseUser,
 } from '../services/firebase';
 import { unsubscribeFromPush } from '../services/fcmService';
 
@@ -73,79 +75,135 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsDark((prev) => !prev);
   };
 
-  // Concurrency guard to prevent multiple simultaneous OAuth requests (Requirement 11)
+  // Concurrency guard to prevent multiple simultaneous OAuth requests
   const isOAuthInProgressRef = useRef<boolean>(false);
-  // Ref to prevent duplicate redirect result processing on re-renders (Requirement 10)
+  // Ref to prevent duplicate redirect result processing on re-renders
   const redirectProcessedRef = useRef<boolean>(false);
 
   const clearAuthError = () => setAuthError(null);
 
-  // Load user session on mount and handle OAuth redirect results (Requirement 10)
+  // Helper to load or initialize an OfficerUser profile in Firestore under /users/{uid}
+  const syncOfficerProfileFromFirestore = async (fbUser: any): Promise<OfficerUser> => {
+    const uid = fbUser.uid;
+    const defaultProfile: OfficerUser = {
+      uid: uid,
+      email: fbUser.email || '',
+      displayName: fbUser.displayName || (fbUser.email ? fbUser.email.split('@')[0] : 'Officer'),
+      badgeNumber: 'DL-POL-' + uid.slice(-4).toUpperCase(),
+      rank: 'Sub-Inspector',
+      policeStation: 'Connaught Place PS',
+      district: 'Central District, Delhi',
+      authProvider: 'google',
+      photoURL: fbUser.photoURL || null,
+      upcomingAlertDays: 7,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      const { db, doc, getDoc, setDoc } = await import('../services/firebase');
+      if (db) {
+        const userDocRef = doc(db, 'users', uid);
+        const userDocSnap = await getDoc(userDocRef).catch(() => null);
+        if (userDocSnap && userDocSnap.exists()) {
+          const data = userDocSnap.data();
+          return {
+            ...defaultProfile,
+            ...data,
+            uid: uid,
+            email: fbUser.email || data.email || '',
+            displayName: data.displayName || fbUser.displayName || defaultProfile.displayName,
+            photoURL: data.photoURL || fbUser.photoURL || null,
+          };
+        } else {
+          // Initialize user document in Firestore
+          await setDoc(userDocRef, defaultProfile, { merge: true }).catch((err) => {
+            console.warn('[Auth] Initializing Firestore user profile notice:', err.message || err);
+          });
+          return defaultProfile;
+        }
+      }
+    } catch (fsErr) {
+      console.warn('[Auth] Firestore user profile sync notice:', fsErr);
+    }
+
+    return defaultProfile;
+  };
+
+  // Firebase onAuthStateChanged as single source of truth for user authentication
   useEffect(() => {
     let isMounted = true;
 
-    const initializeAuth = async () => {
-      // 1. Process Google OAuth redirect result if returning from a mobile or popup-blocked redirect
-      if (!redirectProcessedRef.current) {
-        redirectProcessedRef.current = true;
-        try {
-          const redirectResult = await getRedirectResult(auth).catch((redirectErr: any) => {
-            console.warn('[Auth] getRedirectResult notice:', redirectErr.message || redirectErr);
-            return null;
-          });
-
+    // Handle OAuth redirect result if returning from a mobile redirect
+    if (!redirectProcessedRef.current) {
+      redirectProcessedRef.current = true;
+      getRedirectResult(auth)
+        .then(async (redirectResult) => {
           if (redirectResult && redirectResult.user && isMounted) {
             setIsLoading(true);
             const idToken = await redirectResult.user.getIdToken();
-            const response = await fetch('/api/auth/social', {
+            await fetch('/api/auth/social', {
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ idToken, provider: 'google' }),
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              if (isMounted) {
-                setCurrentUser(data.user);
-                setIsLoading(false);
-              }
-              return;
-            }
+            }).catch(() => {});
           }
-        } catch (redirectHandleErr: any) {
-          console.warn('[Auth] Redirect credential handling notice:', redirectHandleErr);
-        }
-      }
+        })
+        .catch((redirectErr: any) => {
+          console.warn('[Auth] getRedirectResult notice:', redirectErr.message || redirectErr);
+        });
+    }
 
-      // 2. Fetch existing session from /api/auth/me
-      try {
-        const response = await fetch('/api/auth/me', { credentials: 'include' });
-        if (response.ok) {
-          const data = await response.json();
-          if (isMounted) setCurrentUser(data.user);
-        } else {
+    // Subscribe to Firebase Authentication state transitions
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      if (!isMounted) return;
+
+      if (firebaseUser) {
+        setIsLoading(true);
+        try {
+          // 1. Sync / load user profile from Firestore under /users/{uid}
+          const officerProfile = await syncOfficerProfileFromFirestore(firebaseUser);
+
+          // 2. Exchange token with backend server session for API authentication
+          try {
+            const idToken = await firebaseUser.getIdToken();
+            await fetch('/api/auth/social', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ idToken, provider: 'firebase' }),
+            });
+          } catch (backendSyncErr) {
+            console.warn('[Auth] Backend session sync note:', backendSyncErr);
+          }
+
+          if (isMounted) {
+            setCurrentUser(officerProfile);
+            setAuthError(null);
+          }
+        } catch (err: any) {
+          console.error('[Auth] Error resolving authenticated user:', err);
           if (isMounted) {
             setCurrentUser(null);
-            // If backend session is absent, clear any stale client-side Firebase session
-            // so cached credentials do not silently auto-authenticate in future runs (Requirements 2, 7, 9)
-            if (auth.currentUser) {
-              firebaseSignOut(auth).catch(() => {});
-            }
+          }
+        } finally {
+          if (isMounted) {
+            setIsLoading(false);
           }
         }
-      } catch (err) {
-        console.error("Failed to fetch user session:", err);
-        if (isMounted) setCurrentUser(null);
-      } finally {
-        if (isMounted) setIsLoading(false);
+      } else {
+        // User is signed out: clear state immediately to prevent leaking any data
+        if (isMounted) {
+          setCurrentUser(null);
+          setIsLoading(false);
+        }
       }
-    };
-
-    initializeAuth();
+    });
 
     return () => {
       isMounted = false;
+      unsubscribeAuth();
     };
   }, []);
 
@@ -453,6 +511,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentUser) return;
     
     try {
+      const now = new Date().toISOString();
+      const updatedProfile = { ...currentUser, ...updates, updatedAt: now };
+
+      // Update Firestore user profile
+      try {
+        const { db, doc, setDoc } = await import('../services/firebase');
+        if (db && currentUser.uid) {
+          const userDocRef = doc(db, 'users', currentUser.uid);
+          await setDoc(userDocRef, { ...updates, updatedAt: now }, { merge: true });
+        }
+      } catch (fsErr) {
+        console.warn('[Auth] Firestore profile update notice:', fsErr);
+      }
+
+      // Update server session profile
       const response = await fetch('/api/auth/me', {
         method: 'PUT',
         credentials: 'include',
@@ -471,7 +544,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       const data = await response.json();
-      setCurrentUser(data.user);
+      setCurrentUser({ ...updatedProfile, ...data.user });
     } catch (err: any) {
       console.error("Profile update error:", err);
       throw err;

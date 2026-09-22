@@ -75,6 +75,8 @@ export interface OfficerUser {
   district: string;
   authProvider: 'google' | 'facebook' | 'password';
   upcomingAlertDays?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SummonFilter {

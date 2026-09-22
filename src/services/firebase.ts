@@ -1,5 +1,23 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  deleteDoc,
+  updateDoc,
+  query,
+  where,
+  orderBy,
+  serverTimestamp,
+  writeBatch,
+  DocumentData,
+  QuerySnapshot,
+  DocumentSnapshot,
+} from 'firebase/firestore';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -23,8 +41,10 @@ import {
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage';
+import firebaseConfigJson from '../../firebase-applet-config.json';
 
-const rawApiKey = (import.meta.env.VITE_FIREBASE_API_KEY || '').trim();
+// Official project configuration loaded from provisioned firebase-applet-config.json
+const rawApiKey = (firebaseConfigJson.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || '').trim();
 
 // Check if a live, valid Firebase API key has been supplied
 export const isFirebaseConfigured = Boolean(
@@ -36,21 +56,26 @@ export const isFirebaseConfigured = Boolean(
   rawApiKey.length > 20
 );
 
-// Official project configuration
-const defaultFirebaseConfig = {
-  apiKey: isFirebaseConfigured ? rawApiKey : 'AIzaSyDemoPlaceholderKeyForLocalDevOnly00',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'projectformama-6df71.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'projectformama-6df71',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'projectformama-6df71.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '266505592306',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:266505592306:web:c7d1d404e6039a165cdf6b',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-59B1KN7W0K',
+export const defaultFirebaseConfig = {
+  apiKey: rawApiKey || 'AIzaSyDemoPlaceholderKeyForLocalDevOnly00',
+  authDomain: firebaseConfigJson.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'yielding-drake-lvxch.firebaseapp.com',
+  projectId: firebaseConfigJson.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || 'yielding-drake-lvxch',
+  storageBucket: firebaseConfigJson.storageBucket || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'yielding-drake-lvxch.firebasestorage.app',
+  messagingSenderId: firebaseConfigJson.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '399137617746',
+  appId: firebaseConfigJson.appId || import.meta.env.VITE_FIREBASE_APP_ID || '1:399137617746:web:b03625b176096da1012c8b',
+  measurementId: firebaseConfigJson.measurementId || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
 };
 
 // Initialize or reuse Firebase App instance
 const app = getApps().length > 0 ? getApp() : initializeApp(defaultFirebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Use specified custom Firestore database ID if provided, otherwise default
+const customDbId = firebaseConfigJson.firestoreDatabaseId;
+export const db = customDbId && customDbId !== '(default)'
+  ? getFirestore(app, customDbId)
+  : getFirestore(app);
+
 export const storage = getStorage(app);
 
 /**
@@ -92,4 +117,23 @@ export {
   uploadBytes,
   getDownloadURL,
   deleteObject,
+
+  // Firestore primitives
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  deleteDoc,
+  updateDoc,
+  query,
+  where,
+  orderBy,
+  serverTimestamp,
+  writeBatch,
+  type DocumentData,
+  type QuerySnapshot,
+  type DocumentSnapshot,
 };
+

@@ -1,7 +1,15 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Summon, MetricSummary, WitnessPerson } from '../types';
 import { useAuth } from './AuthContext';
 import { requestPushPermissionAndSubscribe } from '../services/fcmService';
+import {
+  db,
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+} from '../services/firebase';
 
 interface SummonContextType {
   summons: Summon[];
@@ -39,57 +47,143 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [witnesses, setWitnesses] = useState<WitnessPerson[]>([]);
   const [isLoadingWitnesses, setIsLoadingWitnesses] = useState<boolean>(true);
 
-  // Fetch summons from MongoDB API
-  const fetchSummons = useCallback(async (uid: string) => {
-    try {
-      const res = await fetch('/api/summons', {
-        credentials: 'include'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSummons(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch summons:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const activeUidRef = useRef<string | null>(null);
 
-  // Fetch witnesses from MongoDB API
-  const fetchWitnesses = useCallback(async (uid: string) => {
-    try {
-      const res = await fetch('/api/witnesses', {
-        credentials: 'include'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setWitnesses(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch witnesses:', err);
-    } finally {
-      setIsLoadingWitnesses(false);
-    }
-  }, []);
-
+  // Real-time Firestore synchronization for Summons & Witnesses scoped strictly to currentUser.uid
   useEffect(() => {
-    if (!currentUser) {
+    let isMounted = true;
+    let unsubSummons: (() => void) | null = null;
+    let unsubWitnesses: (() => void) | null = null;
+
+    if (!currentUser || !currentUser.uid) {
+      activeUidRef.current = null;
       setSummons([]);
-      setIsLoading(false);
-      return;
-    }
-    fetchSummons(currentUser.uid);
-  }, [currentUser, fetchSummons]);
-
-  useEffect(() => {
-    if (!currentUser) {
       setWitnesses([]);
+      setIsLoading(false);
       setIsLoadingWitnesses(false);
       return;
     }
-    fetchWitnesses(currentUser.uid);
-  }, [currentUser, fetchWitnesses]);
+
+    const currentUid = currentUser.uid;
+    activeUidRef.current = currentUid;
+    setIsLoading(true);
+    setIsLoadingWitnesses(true);
+
+    try {
+      // 1. Subscribe to real-time Firestore collection: users/{uid}/summons
+      const summonsColRef = collection(db, 'users', currentUid, 'summons');
+      unsubSummons = onSnapshot(
+        summonsColRef,
+        (snapshot) => {
+          if (!isMounted || activeUidRef.current !== currentUid) return;
+
+          const loadedSummons: Summon[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            loadedSummons.push({
+              ...(data as Summon),
+              id: docSnap.id,
+              userId: currentUid,
+            });
+          });
+
+          // Sort chronologically by createdAt descending
+          loadedSummons.sort((a, b) => {
+            const timeA = new Date(a.createdAt || a.issueDate || '').getTime() || 0;
+            const timeB = new Date(b.createdAt || b.issueDate || '').getTime() || 0;
+            return timeB - timeA;
+          });
+
+          setSummons(loadedSummons);
+          setIsLoading(false);
+
+          // If Firestore summons collection is empty on first load, check if legacy backend has data to migrate
+          if (loadedSummons.length === 0) {
+            fetch('/api/summons', { credentials: 'include' })
+              .then((res) => (res.ok ? res.json() : []))
+              .then(async (legacySummons: Summon[]) => {
+                if (legacySummons && legacySummons.length > 0 && activeUidRef.current === currentUid) {
+                  console.info(`[SummonContext] Migrating ${legacySummons.length} existing summons to Firestore for UID: ${currentUid}`);
+                  for (const s of legacySummons) {
+                    const sId = s.id || ('sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+                    const docToMigrate = { ...s, id: sId, userId: currentUid };
+                    await setDoc(doc(db, 'users', currentUid, 'summons', sId), docToMigrate, { merge: true }).catch(() => {});
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+        },
+        async (error) => {
+          console.warn('[SummonContext] Firestore summons listener notice:', error.message || error);
+          // Fallback to backend API if Firestore encounters any permission / offline block
+          try {
+            const res = await fetch('/api/summons', { credentials: 'include' });
+            if (res.ok && isMounted && activeUidRef.current === currentUid) {
+              const data = await res.json();
+              setSummons(data);
+            }
+          } catch (fetchErr) {
+            console.warn('[SummonContext] API fallback error:', fetchErr);
+          } finally {
+            if (isMounted) setIsLoading(false);
+          }
+        }
+      );
+
+      // 2. Subscribe to real-time Firestore collection: users/{uid}/witnesses
+      const witnessesColRef = collection(db, 'users', currentUid, 'witnesses');
+      unsubWitnesses = onSnapshot(
+        witnessesColRef,
+        (snapshot) => {
+          if (!isMounted || activeUidRef.current !== currentUid) return;
+
+          const loadedWitnesses: WitnessPerson[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            loadedWitnesses.push({
+              ...(data as WitnessPerson),
+              id: docSnap.id,
+              userId: currentUid,
+            });
+          });
+
+          loadedWitnesses.sort((a, b) => {
+            const timeA = new Date(a.createdAt || '').getTime() || 0;
+            const timeB = new Date(b.createdAt || '').getTime() || 0;
+            return timeB - timeA;
+          });
+
+          setWitnesses(loadedWitnesses);
+          setIsLoadingWitnesses(false);
+        },
+        async (error) => {
+          console.warn('[SummonContext] Firestore witnesses listener notice:', error.message || error);
+          try {
+            const res = await fetch('/api/witnesses', { credentials: 'include' });
+            if (res.ok && isMounted && activeUidRef.current === currentUid) {
+              const data = await res.json();
+              setWitnesses(data);
+            }
+          } catch (fetchErr) {
+            console.warn('[SummonContext] Witnesses API fallback error:', fetchErr);
+          } finally {
+            if (isMounted) setIsLoadingWitnesses(false);
+          }
+        }
+      );
+    } catch (err) {
+      console.error('[SummonContext] Setup Firestore subscription error:', err);
+      setIsLoading(false);
+      setIsLoadingWitnesses(false);
+    }
+
+    return () => {
+      isMounted = false;
+      if (unsubSummons) unsubSummons();
+      if (unsubWitnesses) unsubWitnesses();
+    };
+  }, [currentUser]);
 
   const uploadAttachment = async (
     summonId: string,
@@ -111,7 +205,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         fileToUpload = fileOrDataUrl;
       }
 
-      if (!isFirebaseConfigured) {
+      if (!isFirebaseConfigured || !storage) {
         throw new Error('Firebase Storage not configured, falling back to local base64.');
       }
 
@@ -119,7 +213,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       
       // Add timeout to prevent hanging
       const uploadPromise = uploadBytes(fileRef, fileToUpload);
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Upload timeout')), 10000));
+      const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Upload timeout')), 10000));
       
       await Promise.race([uploadPromise, timeoutPromise]);
       const downloadURL = await getDownloadURL(fileRef);
@@ -140,7 +234,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     summonData: Omit<Summon, 'id' | 'userId' | 'createdAt' | 'updatedAt'>,
     attachmentFile?: File | Blob | null
   ): Promise<Summon> => {
-    if (!currentUser) throw new Error('User must be authenticated to add summons');
+    if (!currentUser || !currentUser.uid) throw new Error('User must be authenticated to add summons');
     
     const now = new Date().toISOString();
     const summonId = 'sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
@@ -167,9 +261,17 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updatedAt: now,
     };
 
-    // Save to DB first to ensure persistence
+    // 1. Primary write to Firestore under users/{uid}/summons/{summonId}
     try {
-      const response = await fetch('/api/summons', {
+      const docRef = doc(db, 'users', currentUser.uid, 'summons', summonId);
+      await setDoc(docRef, newSummon);
+    } catch (fsErr) {
+      console.warn('[SummonContext] Firestore addSummon notice:', fsErr);
+    }
+
+    // 2. Also synchronize with backend API endpoint
+    try {
+      await fetch('/api/summons', {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -177,29 +279,21 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         },
         body: JSON.stringify(newSummon)
       });
-      
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Failed to save to database: ${response.statusText}`);
-      }
-      
-      const savedSummon = await response.json();
-      
-      // Save synchronously to local state only after DB success
-      setSummons((prev) => {
-        const updated = [savedSummon, ...prev.filter((s) => s.id !== summonId)];
-        return updated;
-      });
-      
-      return savedSummon;
-    } catch (err) {
-      console.error("Failed to save summon to DB:", err);
-      throw err;
+    } catch (apiErr) {
+      console.warn('[SummonContext] Backend sync addSummon notice:', apiErr);
     }
+
+    // Local state is updated via Firestore onSnapshot, but update immediately for instant responsiveness
+    setSummons((prev) => {
+      const updated = [newSummon, ...prev.filter((s) => s.id !== summonId)];
+      return updated;
+    });
+
+    return newSummon;
   };
 
   const updateSummon = async (id: string, updates: Partial<Summon>, attachmentFile?: File | Blob | null, fileName?: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !currentUser.uid) return;
     const now = new Date().toISOString();
     let finalImageUrl = updates.imageUrl;
     let finalPdfUrl = updates.pdfUrl;
@@ -211,10 +305,24 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         finalImageUrl = dataUrl;
       }
     }
-    const updatedRecord = { ...updates, updatedAt: now, ...(finalImageUrl !== undefined && { imageUrl: finalImageUrl }), ...(finalPdfUrl !== undefined && { pdfUrl: finalPdfUrl }) };
+    const updatedRecord = {
+      ...updates,
+      updatedAt: now,
+      ...(finalImageUrl !== undefined && { imageUrl: finalImageUrl }),
+      ...(finalPdfUrl !== undefined && { pdfUrl: finalPdfUrl })
+    };
 
+    // 1. Update in Firestore under users/{uid}/summons/{id}
     try {
-      const response = await fetch(`/api/summons/${id}`, {
+      const docRef = doc(db, 'users', currentUser.uid, 'summons', id);
+      await setDoc(docRef, updatedRecord, { merge: true });
+    } catch (fsErr) {
+      console.warn('[SummonContext] Firestore updateSummon notice:', fsErr);
+    }
+
+    // 2. Synchronize with backend API
+    try {
+      await fetch(`/api/summons/${id}`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -222,33 +330,37 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         },
         body: JSON.stringify(updatedRecord)
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to update summon in database');
-      }
-
-      setSummons((prev) => {
-        const updated = prev.map((s) => (s.id === id ? { ...s, ...updatedRecord } : s));
-        return updated;
-      });
-    } catch (err) {
-      console.error("Failed to update summon in DB:", err);
-      throw err;
+    } catch (apiErr) {
+      console.warn('[SummonContext] Backend sync updateSummon notice:', apiErr);
     }
+
+    setSummons((prev) => {
+      const updated = prev.map((s) => (s.id === id ? { ...s, ...updatedRecord } : s));
+      return updated;
+    });
   };
 
   const deleteSummon = async (id: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !currentUser.uid) return;
     try {
       const summonToDelete = summons.find(s => s.id === id);
-      
-      const response = await fetch(`/api/summons/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to delete summon from database');
+
+      // 1. Delete from Firestore under users/{uid}/summons/{id}
+      try {
+        const docRef = doc(db, 'users', currentUser.uid, 'summons', id);
+        await deleteDoc(docRef);
+      } catch (fsErr) {
+        console.warn('[SummonContext] Firestore deleteSummon notice:', fsErr);
+      }
+
+      // 2. Delete from backend API
+      try {
+        await fetch(`/api/summons/${id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+      } catch (apiErr) {
+        console.warn('[SummonContext] Backend sync deleteSummon notice:', apiErr);
       }
 
       if (summonToDelete) {
@@ -272,7 +384,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return updated;
       });
     } catch (err) {
-      console.error("Failed to delete summon from DB:", err);
+      console.error("Failed to delete summon:", err);
       throw err;
     }
   };
@@ -302,7 +414,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const addWitness = async (
     witnessData: Omit<WitnessPerson, 'id' | 'userId' | 'createdAt' | 'updatedAt'>
   ): Promise<WitnessPerson> => {
-    if (!currentUser) throw new Error('User must be authenticated to add witnesses');
+    if (!currentUser || !currentUser.uid) throw new Error('User must be authenticated to add witnesses');
     const now = new Date().toISOString();
     const witnessId = 'wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
@@ -314,8 +426,17 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updatedAt: now,
     };
 
+    // 1. Write to Firestore users/{uid}/witnesses/{witnessId}
     try {
-      const response = await fetch('/api/witnesses', {
+      const docRef = doc(db, 'users', currentUser.uid, 'witnesses', witnessId);
+      await setDoc(docRef, newWitness);
+    } catch (fsErr) {
+      console.warn('[SummonContext] Firestore addWitness notice:', fsErr);
+    }
+
+    // 2. Write to backend API
+    try {
+      await fetch('/api/witnesses', {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -323,32 +444,34 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         },
         body: JSON.stringify(newWitness)
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to save witness to database');
-      }
-      
-      const savedWitness = await response.json();
-      
-      setWitnesses((prev) => {
-        const updated = [savedWitness, ...prev.filter((w) => w.id !== witnessId)];
-        return updated;
-      });
-      
-      return savedWitness;
-    } catch (err) {
-      console.error("Failed to save witness to DB:", err);
-      throw err;
+    } catch (apiErr) {
+      console.warn('[SummonContext] Backend sync addWitness notice:', apiErr);
     }
+
+    setWitnesses((prev) => {
+      const updated = [newWitness, ...prev.filter((w) => w.id !== witnessId)];
+      return updated;
+    });
+
+    return newWitness;
   };
 
   const updateWitness = async (id: string, updates: Partial<WitnessPerson>) => {
-    if (!currentUser) return;
+    if (!currentUser || !currentUser.uid) return;
     const now = new Date().toISOString();
     const updatedRecord = { ...updates, updatedAt: now };
 
+    // 1. Update in Firestore
     try {
-      const response = await fetch(`/api/witnesses/${id}`, {
+      const docRef = doc(db, 'users', currentUser.uid, 'witnesses', id);
+      await setDoc(docRef, updatedRecord, { merge: true });
+    } catch (fsErr) {
+      console.warn('[SummonContext] Firestore updateWitness notice:', fsErr);
+    }
+
+    // 2. Update in backend API
+    try {
+      await fetch(`/api/witnesses/${id}`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -356,31 +479,35 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         },
         body: JSON.stringify(updatedRecord)
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to update witness in database');
-      }
-
-      setWitnesses((prev) => {
-        const updated = prev.map((w) => (w.id === id ? { ...w, ...updatedRecord } : w));
-        return updated;
-      });
-    } catch (err) {
-      console.error("Failed to update witness in DB:", err);
-      throw err;
+    } catch (apiErr) {
+      console.warn('[SummonContext] Backend sync updateWitness notice:', apiErr);
     }
+
+    setWitnesses((prev) => {
+      const updated = prev.map((w) => (w.id === id ? { ...w, ...updatedRecord } : w));
+      return updated;
+    });
   };
 
   const deleteWitness = async (id: string) => {
-    if (!currentUser) return;
+    if (!currentUser || !currentUser.uid) return;
     try {
-      const response = await fetch(`/api/witnesses/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to delete witness from database');
+      // 1. Delete from Firestore
+      try {
+        const docRef = doc(db, 'users', currentUser.uid, 'witnesses', id);
+        await deleteDoc(docRef);
+      } catch (fsErr) {
+        console.warn('[SummonContext] Firestore deleteWitness notice:', fsErr);
+      }
+
+      // 2. Delete from backend API
+      try {
+        await fetch(`/api/witnesses/${id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+      } catch (apiErr) {
+        console.warn('[SummonContext] Backend sync deleteWitness notice:', apiErr);
       }
 
       setWitnesses((prev) => {
@@ -388,7 +515,7 @@ export const SummonProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return updated;
       });
     } catch (err) {
-      console.error("Failed to delete witness from DB:", err);
+      console.error("Failed to delete witness:", err);
       throw err;
     }
   };
@@ -435,3 +562,4 @@ export const useSummons = (): SummonContextType => {
   }
   return context;
 };
+

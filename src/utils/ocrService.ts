@@ -276,15 +276,58 @@ export const inspectOcrHealth = async (): Promise<{
   }
 };
 
-// Main AI Document OCR Scanner with real error reporting, session tracking, signal cancellation and timeout protection
+export interface DocketValidationResult {
+  isValid: boolean;
+  errors: string[];
+  data: ExtractedSummonData;
+}
+
+// Structured Docket Validator
+export const validateDocketData = (data: Partial<ExtractedSummonData>): DocketValidationResult => {
+  const errors: string[] = [];
+  const normalized: ExtractedSummonData = {
+    summonNumber: (data.summonNumber || '').trim(),
+    caseNumber: (data.caseNumber || '').trim(),
+    personName: (data.personName || '').trim(),
+    fatherName: data.fatherName?.trim() || undefined,
+    address: (data.address || '').trim(),
+    courtName: (data.courtName || '').trim(),
+    courtAddress: (data.courtAddress || '').trim(),
+    policeStation: (data.policeStation || '').trim(),
+    district: (data.district || '').trim(),
+    state: (data.state || 'Delhi NCT').trim(),
+    issueDate: data.issueDate || new Date().toISOString().split('T')[0],
+    hearingDate: data.hearingDate || '',
+    issuingAuthority: data.issuingAuthority?.trim() || undefined,
+    officerDetails: data.officerDetails?.trim() || undefined,
+    offenseCharges: data.offenseCharges?.trim() || undefined,
+    urgency: (data.urgency === 'Urgent' || data.urgency === 'High') ? data.urgency : 'Standard',
+    detectedFields: data.detectedFields || [],
+    fieldMetadata: data.fieldMetadata || {},
+  };
+
+  const hasIdentifier = Boolean(normalized.summonNumber || normalized.caseNumber || normalized.personName);
+  if (!hasIdentifier) {
+    errors.push('No valid identifier (Summon No., Case No., or Person Name) found.');
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    data: normalized,
+  };
+};
+
+// Main AI Document OCR Scanner with real error reporting, session tracking, signal cancellation and hard timeout protection
 export const scanSummonDocument = async (
   base64Data: string,
   mimeType: string,
   sessionId?: string,
-  externalSignal?: AbortSignal
+  externalSignal?: AbortSignal,
+  onProgressStage?: (stageText: string, progressPercent: number, stepIndex: number) => void
 ): Promise<OcrResult> => {
   const startTime = Date.now();
-  console.info(`[OCR Client] Initiating document scan (${mimeType}, session=${sessionId || 'n/a'})...`);
+  console.info(`[DOCKET] scan started (sessionId=${sessionId || 'n/a'}, mime=${mimeType})`);
 
   if (externalSignal?.aborted) {
     return {
@@ -297,23 +340,33 @@ export const scanSummonDocument = async (
     };
   }
 
-  // Optimize high-resolution mobile camera captures before transmission
+  onProgressStage?.('Scanning document & optimizing...', 15, 1);
+
+  // 1. Optimize high-resolution mobile camera captures before transmission
   let payloadDataUrl = base64Data;
   let payloadMime = mimeType;
   try {
-    const optimized = await optimizeImageForOcr(base64Data, mimeType);
+    const optStart = Date.now();
+    const optimized = await optimizeImageForOcr(base64Data, mimeType, 1600, 0.82);
     payloadDataUrl = optimized.dataUrl;
     payloadMime = optimized.mimeType;
+    console.info(`[DOCKET] Image optimization completed in ${Date.now() - optStart}ms`);
   } catch (optErr) {
-    console.warn('[OCR Client] Image optimization skipped:', optErr);
+    console.warn('[DOCKET] Image optimization skipped:', optErr);
   }
 
-  // Combined timeout and external abort controller
+  onProgressStage?.('Reading text & judicial OCR...', 40, 2);
+  console.info(`[DOCKET] OCR started (sessionId=${sessionId || 'n/a'})`);
+
+  // Combined hard timeout (30s) and external abort controller
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error('Timeout')), 45000);
+  const timeoutId = setTimeout(() => {
+    console.warn(`[DOCKET] Hard timeout triggered after 30000ms`);
+    controller.abort(new Error('AI extraction timed out after 30 seconds'));
+  }, 30000);
 
   const abortListener = () => {
-    controller.abort(new Error('Cancelled'));
+    controller.abort(new Error('Cancelled by user'));
   };
 
   if (externalSignal) {
@@ -321,6 +374,10 @@ export const scanSummonDocument = async (
   }
 
   try {
+    onProgressStage?.('Extracting case details & schedule...', 70, 3);
+    console.info(`[DOCKET] AI request started (session=${sessionId || 'n/a'})`);
+    const aiReqStart = Date.now();
+
     const res = await fetch('/api/ocr', {
       credentials: 'include',
       method: 'POST',
@@ -333,9 +390,13 @@ export const scanSummonDocument = async (
       externalSignal.removeEventListener('abort', abortListener);
     }
 
-    console.info(`[OCR Client] Received response: HTTP ${res.status} in ${Date.now() - startTime}ms`);
+    const aiReqDuration = Date.now() - aiReqStart;
+    console.info(`[DOCKET] AI response received in ${aiReqDuration}ms (HTTP ${res.status})`);
 
     if (res.ok) {
+      onProgressStage?.('Validating docket particulars...', 90, 4);
+      console.info(`[DOCKET] JSON parsing started`);
+
       const data = await res.json();
       const responseSessionId = data.sessionId || sessionId;
 
@@ -403,21 +464,67 @@ export const scanSummonDocument = async (
         }
       });
 
+      // If structured fields are sparse, fallback to strict regex parsing of rawText if returned
+      if (detected.length === 0 && data.rawText) {
+        console.info(`[DOCKET] Fallback regex parsing on rawText...`);
+        const fallbackParsed = parseSummonTextStrict(data.rawText);
+        if (fallbackParsed.detectedFields && fallbackParsed.detectedFields.length > 0) {
+          console.info(`[DOCKET] Fallback regex extracted ${fallbackParsed.detectedFields.length} fields`);
+          onProgressStage?.('Docket extraction completed', 100, 5);
+          return {
+            sessionId: responseSessionId,
+            success: true,
+            isAutofilled: true,
+            isUnreadable: false,
+            overallConfidence: 0.80,
+            message: `Extracted ${fallbackParsed.detectedFields.length} fields from document.`,
+            data: fallbackParsed,
+          };
+        }
+      }
+
       const hasLegitimateData = detected.length > 0 && Boolean(fieldMap.summonNumber.value || fieldMap.personName.value || fieldMap.caseNumber.value || fieldMap.courtName.value);
       const isExplicitlyUnreadable = data.isReadable === false || (!hasLegitimateData && (!data.rawText || data.rawText.trim().length === 0));
 
       if (isExplicitlyUnreadable || !hasLegitimateData) {
+        console.info(`[DOCKET] Document marked unreadable or empty.`);
         return {
           sessionId: responseSessionId,
           success: false,
           isAutofilled: false,
           isUnreadable: true,
-          message: 'Unable to read this document.',
+          message: 'Unable to read this document. Please verify image clarity or enter details manually.',
           data: parseSummonTextStrict(''),
         };
       }
 
       const avgConfidence = detected.length > 0 ? totalConfidenceSum / detected.length : 0;
+      const totalDuration = Date.now() - startTime;
+      console.info(`[DOCKET] validation completed: ${detected.length} fields (total=${totalDuration}ms)`);
+      console.info(`[DOCKET] extraction completed`);
+
+      onProgressStage?.('Docket verified & completed', 100, 5);
+
+      const extractedData: ExtractedSummonData = {
+        summonNumber: fieldMap.summonNumber.value,
+        caseNumber: fieldMap.caseNumber.value,
+        personName: fieldMap.personName.value,
+        fatherName: fieldMap.fatherName.value || undefined,
+        address: fieldMap.address.value,
+        courtName: fieldMap.courtName.value,
+        courtAddress: fieldMap.courtAddress.value,
+        policeStation: fieldMap.policeStation.value,
+        district: fieldMap.district.value,
+        state: fieldMap.state.value || 'Delhi NCT',
+        issueDate: fieldMap.issueDate.value || new Date().toISOString().split('T')[0],
+        hearingDate: fieldMap.hearingDate.value || '',
+        issuingAuthority: fieldMap.issuingAuthority.value || undefined,
+        officerDetails: fieldMap.officerDetails.value || undefined,
+        offenseCharges: fieldMap.offenseCharges.value || undefined,
+        urgency: (fieldMap.urgency.value === 'Urgent' || fieldMap.urgency.value === 'High') ? fieldMap.urgency.value : 'Standard',
+        detectedFields: detected,
+        fieldMetadata,
+      };
 
       return {
         sessionId: responseSessionId,
@@ -426,51 +533,35 @@ export const scanSummonDocument = async (
         isUnreadable: false,
         overallConfidence: avgConfidence,
         message: `Extracted ${detected.length} fields from document.`,
-        data: {
-          summonNumber: fieldMap.summonNumber.value,
-          caseNumber: fieldMap.caseNumber.value,
-          personName: fieldMap.personName.value,
-          fatherName: fieldMap.fatherName.value || undefined,
-          address: fieldMap.address.value,
-          courtName: fieldMap.courtName.value,
-          courtAddress: fieldMap.courtAddress.value,
-          policeStation: fieldMap.policeStation.value,
-          district: fieldMap.district.value,
-          state: fieldMap.state.value || 'Delhi NCT',
-          issueDate: fieldMap.issueDate.value || new Date().toISOString().split('T')[0],
-          hearingDate: fieldMap.hearingDate.value || '',
-          issuingAuthority: fieldMap.issuingAuthority.value || undefined,
-          officerDetails: fieldMap.officerDetails.value || undefined,
-          offenseCharges: fieldMap.offenseCharges.value || undefined,
-          urgency: (fieldMap.urgency.value === 'Urgent' || fieldMap.urgency.value === 'High') ? fieldMap.urgency.value : 'Standard',
-          detectedFields: detected,
-          fieldMetadata,
-        },
+        data: extractedData,
       };
     } else {
       const errJson = await res.json().catch(() => ({}));
-      console.error(`[OCR Client] Server error HTTP ${res.status}:`, errJson);
+      console.error(`[DOCKET] Server error HTTP ${res.status}:`, errJson);
 
       return {
         sessionId: errJson.sessionId || sessionId,
         success: false,
         isAutofilled: false,
         isUnreadable: true,
-        message: 'Unable to read this document.',
+        message: errJson.error || 'Unable to read this document.',
         data: parseSummonTextStrict(''),
       };
     }
   } catch (err: any) {
     clearTimeout(timeoutId);
-    console.error('[OCR Client] Fetch error:', err);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', abortListener);
+    }
+    console.error('[DOCKET] Extraction error caught:', err);
 
     let failMessage = 'Document OCR scan failed.';
-    if (err.name === 'AbortError') {
-      failMessage = 'Document OCR timed out. The scan took too long. Please enter details manually.';
+    if (err.name === 'AbortError' || (err.message && err.message.includes('timed out'))) {
+      failMessage = 'Document AI extraction timed out (30s limit). Please check your connection or retry.';
     } else if (err.message && err.message.includes('Failed to fetch')) {
-      failMessage = `Could not connect to OCR server at ${window.location.origin}/api/ocr. Server may still be starting.`;
+      failMessage = 'Could not connect to OCR server. Please retry in a moment.';
     } else {
-      failMessage = err.message || 'OCR scanner encounter an unexpected error.';
+      failMessage = err.message || 'OCR scanner encountered an unexpected error.';
     }
 
     return {
@@ -482,6 +573,40 @@ export const scanSummonDocument = async (
       data: parseSummonTextStrict(''),
     };
   }
+};
+
+// Retry wrapper with exponential backoff for transient issues
+export const scanSummonDocumentWithRetry = async (
+  base64Data: string,
+  mimeType: string,
+  sessionId?: string,
+  externalSignal?: AbortSignal,
+  maxAttempts = 2,
+  onProgressStage?: (stageText: string, progressPercent: number, stepIndex: number) => void
+): Promise<OcrResult> => {
+  let lastResult: OcrResult | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (externalSignal?.aborted) break;
+    if (attempt > 1) {
+      console.info(`[DOCKET] Retrying extraction (Attempt ${attempt}/${maxAttempts})...`);
+      onProgressStage?.(`Retrying extraction (attempt ${attempt})...`, 20, 1);
+      await new Promise((r) => setTimeout(r, 1000 * (attempt - 1)));
+    }
+    lastResult = await scanSummonDocument(base64Data, mimeType, sessionId, externalSignal, onProgressStage);
+    if (lastResult.success && !lastResult.isUnreadable) {
+      return lastResult;
+    }
+  }
+  return (
+    lastResult || {
+      sessionId,
+      success: false,
+      isAutofilled: false,
+      isUnreadable: true,
+      message: 'Extraction could not complete after multiple attempts.',
+      data: parseSummonTextStrict(''),
+    }
+  );
 };
 
 // Parse judicial QR code payload (handles e-Courts URLs, JSON, key-value pairs, raw CNR, and text blocks)

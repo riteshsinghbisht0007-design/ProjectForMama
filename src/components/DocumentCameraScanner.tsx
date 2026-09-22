@@ -15,6 +15,7 @@ import {
   SwitchCamera,
   Sparkles,
   AlertCircle,
+  AlertTriangle,
   FileCheck,
   ChevronRight,
   Loader2,
@@ -58,7 +59,24 @@ export type ScannerPhase =
   | 'captured'
   | 'cropping'
   | 'processingOCR'
+  | 'extractionError'
   | 'review';
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  try {
+    const parts = dataUrl.split(',');
+    const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const bstr = atob(parts[1] || '');
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  } catch (_) {
+    return new Blob([], { type: 'image/jpeg' });
+  }
+}
 
 function centerDocumentCrop(mediaWidth: number, mediaHeight: number) {
   // Center 90% crop suitable for portrait summons and court documents
@@ -105,6 +123,8 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
   // Images state
   const [originalDataUrl, setOriginalDataUrl] = useState<string | null>(null);
   const [cropSourceUrl, setCropSourceUrl] = useState<string | null>(null);
+  const [lastCroppedDataUrl, setLastCroppedDataUrl] = useState<string | null>(null);
+  const [lastCroppedBlob, setLastCroppedBlob] = useState<Blob | null>(null);
   const [workingFileName, setWorkingFileName] = useState<string>('Summon_Scan.jpg');
 
   // Crop & zoom controls
@@ -118,11 +138,12 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
   // Shutter flash effect
   const [shutterFlash, setShutterFlash] = useState(false);
 
-  // OCR progression states
-  const [ocrStepIndex, setOcrStepIndex] = useState<number>(0);
-  const [ocrStepText, setOcrStepText] = useState<string>('Scanning Summon...');
+  // OCR progression & error states
+  const [ocrStepIndex, setOcrStepIndex] = useState<number>(1);
+  const [ocrStepText, setOcrStepText] = useState<string>('Scanning document & optimizing...');
   const [ocrProgressPercent, setOcrProgressPercent] = useState<number>(15);
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
 
   // File input ref for upload fallback
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -509,38 +530,21 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
     const ocrController = new AbortController();
     ocrAbortControllerRef.current = ocrController;
 
+    setExtractionError(null);
     setIsExtracting(true);
     setPhase('processingOCR');
 
-    // Progression telemetry simulation
+    // Initialize progress stage
     setOcrStepIndex(1);
-    setOcrStepText('Scanning Summon...');
-    setOcrProgressPercent(25);
+    setOcrStepText('Scanning document & optimizing...');
+    setOcrProgressPercent(15);
 
-    const stepTimer2 = setTimeout(() => {
-      setOcrStepIndex(2);
-      setOcrStepText('Extracting docket information...');
-      setOcrProgressPercent(55);
-    }, 850);
-
-    const stepTimer3 = setTimeout(() => {
-      setOcrStepIndex(3);
-      setOcrStepText('Reading hearing date...');
-      setOcrProgressPercent(80);
-    }, 1700);
-
-    const stepTimer4 = setTimeout(() => {
-      setOcrStepIndex(4);
-      setOcrStepText('Preparing docket particulars...');
-      setOcrProgressPercent(95);
-    }, 2400);
+    let finalCroppedDataUrl = cropSourceUrl;
+    let finalCroppedBlob: Blob;
+    let canvas: HTMLCanvasElement | null = null;
 
     try {
       // 1. Generate Cropped Image Canvas
-      let finalCroppedDataUrl = cropSourceUrl;
-      let finalCroppedBlob: Blob;
-      let canvas: HTMLCanvasElement | null = null;
-
       if (imgRef.current && completedCrop?.width && completedCrop?.height) {
         const image = imgRef.current;
         canvas = document.createElement('canvas');
@@ -552,8 +556,8 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
         const cropWidth = completedCrop.width * scaleX;
         const cropHeight = completedCrop.height * scaleY;
 
-        // Downscale bounds for maximum OCR speed and efficiency
-        const MAX_DIM = 2000;
+        // Downscale bounds for maximum OCR speed and efficiency (max 1600px)
+        const MAX_DIM = 1600;
         let targetWidth = cropWidth;
         let targetHeight = cropHeight;
         if (targetWidth > MAX_DIM || targetHeight > MAX_DIM) {
@@ -584,23 +588,19 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
           canvas.height
         );
 
-        finalCroppedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
-        finalCroppedBlob = await new Promise<Blob>((res, rej) => {
-          canvas!.toBlob(
-            (b) => (b ? res(b) : rej(new Error('Blob creation failed'))),
-            'image/jpeg',
-            0.88
-          );
-        });
+        finalCroppedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        finalCroppedBlob = dataUrlToBlob(finalCroppedDataUrl);
       } else {
         // Full image fallback
-        const r = await fetch(cropSourceUrl);
-        finalCroppedBlob = await r.blob();
+        finalCroppedBlob = dataUrlToBlob(cropSourceUrl);
       }
+
+      setLastCroppedDataUrl(finalCroppedDataUrl);
+      setLastCroppedBlob(finalCroppedBlob);
 
       // 2. Prepare Original Blob and Files
       const originalBlob = originalDataUrl
-        ? await (await fetch(originalDataUrl)).blob()
+        ? dataUrlToBlob(originalDataUrl)
         : finalCroppedBlob;
 
       const originalFile = new File([originalBlob], workingFileName, { type: 'image/jpeg' });
@@ -608,18 +608,34 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
         type: 'image/jpeg',
       });
 
-      // 3. Execute existing AI OCR pipeline on CROPPED image with session ID and signal
+      // 3. Execute existing AI OCR pipeline on CROPPED image with session ID, signal, and real progress callback
       const currentSessionId = activeSessionIdRef.current;
       const ocrResult = await scanSummonDocument(
         finalCroppedDataUrl,
         'image/jpeg',
         currentSessionId,
-        ocrController.signal
+        ocrController.signal,
+        (stageText, progressPercent, stepIndex) => {
+          if (activeSessionIdRef.current !== currentSessionId) return;
+          setOcrStepText(stageText);
+          setOcrProgressPercent(progressPercent);
+          setOcrStepIndex(stepIndex);
+        }
       );
 
       // Verify that session hasn't been superseded while waiting for OCR
       if (activeSessionIdRef.current !== currentSessionId) {
         console.info(`[Camera Scanner] Dropping OCR result from superseded session (${currentSessionId})`);
+        return;
+      }
+
+      // Check if OCR failed, timed out, or was flagged unreadable
+      if (!ocrResult.success || ocrResult.isUnreadable) {
+        console.warn('[Camera Scanner] Document extraction failed or unreadable:', ocrResult.message);
+        setExtractionError(
+          ocrResult.message || 'The AI extraction timed out or could not parse all fields. Your scanned image has been preserved.'
+        );
+        setPhase('extractionError');
         return;
       }
 
@@ -645,71 +661,83 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
         console.warn('QR check failed during document scan:', qrErr);
       }
 
-      clearTimeout(stepTimer2);
-      clearTimeout(stepTimer3);
-      clearTimeout(stepTimer4);
       setOcrProgressPercent(100);
 
       // Pass comprehensive artifacts back to parent review modal
-      setTimeout(() => {
-        if (activeSessionIdRef.current !== currentSessionId) return;
-        setIsExtracting(false);
-        onScanComplete({
-          scanSessionId: currentSessionId,
-          originalDataUrl: originalDataUrl || finalCroppedDataUrl,
-          croppedDataUrl: finalCroppedDataUrl,
-          croppedBlob: finalCroppedBlob,
-          originalFile,
-          croppedFile,
-          ocrResult,
-          fileName: workingFileName,
-        });
-      }, 400);
-    } catch (err: any) {
-      console.warn('[Camera Scanner] Crop / OCR failed:', err);
-      clearTimeout(stepTimer2);
-      clearTimeout(stepTimer3);
-      clearTimeout(stepTimer4);
-
-      const currentSessionId = activeSessionIdRef.current;
-      // Fallback empty result so user can still manually review and enter details
-      const fallbackResult: OcrResult = {
-        sessionId: currentSessionId,
-        data: {
-          summonNumber: '',
-          caseNumber: '',
-          personName: '',
-          address: '',
-          courtName: '',
-          courtAddress: '',
-          policeStation: '',
-          district: '',
-          state: 'Delhi NCT',
-          issueDate: new Date().toISOString().split('T')[0],
-          hearingDate: '',
-          detectedFields: [],
-        },
-        success: false,
-        isUnreadable: true,
-        message: "Unable to read this document.",
-        isAutofilled: false,
-      };
-
-      const dummyBlob = await (await fetch(cropSourceUrl)).blob();
-      const dummyFile = new File([dummyBlob], workingFileName, { type: 'image/jpeg' });
-
-      setIsExtracting(false);
       onScanComplete({
         scanSessionId: currentSessionId,
-        originalDataUrl: originalDataUrl || cropSourceUrl,
-        croppedDataUrl: cropSourceUrl,
-        croppedBlob: dummyBlob,
-        originalFile: dummyFile,
-        croppedFile: dummyFile,
-        ocrResult: fallbackResult,
+        originalDataUrl: originalDataUrl || finalCroppedDataUrl,
+        croppedDataUrl: finalCroppedDataUrl,
+        croppedBlob: finalCroppedBlob,
+        originalFile,
+        croppedFile,
+        ocrResult,
         fileName: workingFileName,
       });
+    } catch (err: any) {
+      console.warn('[Camera Scanner] Crop / OCR failed:', err);
+      if (err.name === 'AbortError' || ocrController.signal.aborted) {
+        console.info('[Camera Scanner] OCR aborted by user or timeout.');
+      }
+      setExtractionError(
+        err.message || 'AI extraction timed out. Your scanned image has been preserved.'
+      );
+      setPhase('extractionError');
+    } finally {
+      setIsExtracting(false);
     }
+  };
+
+  // Retry handler that creates a fresh session ID and re-triggers extraction
+  const handleRetryExtraction = () => {
+    activeSessionIdRef.current = generateScanSessionId();
+    handleConfirmCropAndScan();
+  };
+
+  // Skip straight to manual form entry while preserving the captured cropped image
+  const handleProceedWithManualEntry = () => {
+    if (ocrAbortControllerRef.current) {
+      ocrAbortControllerRef.current.abort();
+      ocrAbortControllerRef.current = null;
+    }
+    const currentSessionId = activeSessionIdRef.current;
+    const targetDataUrl = lastCroppedDataUrl || cropSourceUrl || '';
+    const targetBlob = lastCroppedBlob || dataUrlToBlob(targetDataUrl);
+    const targetFile = new File([targetBlob], workingFileName, { type: 'image/jpeg' });
+
+    const fallbackResult: OcrResult = {
+      sessionId: currentSessionId,
+      data: {
+        summonNumber: '',
+        caseNumber: '',
+        personName: '',
+        address: '',
+        courtName: '',
+        courtAddress: '',
+        policeStation: '',
+        district: '',
+        state: 'Delhi NCT',
+        issueDate: new Date().toISOString().split('T')[0],
+        hearingDate: '',
+        detectedFields: [],
+      },
+      success: false,
+      isUnreadable: true,
+      message: 'Manual entry selected. Scanned document attached.',
+      isAutofilled: false,
+    };
+
+    setIsExtracting(false);
+    onScanComplete({
+      scanSessionId: currentSessionId,
+      originalDataUrl: originalDataUrl || targetDataUrl,
+      croppedDataUrl: targetDataUrl,
+      croppedBlob: targetBlob,
+      originalFile: targetFile,
+      croppedFile: targetFile,
+      ocrResult: fallbackResult,
+      fileName: workingFileName,
+    });
   };
 
   if (!isOpen) return null;
@@ -1221,6 +1249,89 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
                 <span>OCR Pipeline</span>
                 <span>{ocrProgressPercent}%</span>
               </div>
+            </div>
+
+            {/* Manual Skip Action */}
+            <button
+              type="button"
+              onClick={handleProceedWithManualEntry}
+              className="text-xs text-white/60 hover:text-white underline underline-offset-4 cursor-pointer pt-2"
+            >
+              Skip AI extraction & enter details manually →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PHASE 5: EXTRACTION ERROR / RETRY SCREEN                                   */}
+      {/* ========================================================================= */}
+      {phase === 'extractionError' && (
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 bg-neutral-950">
+          <div className="w-full max-w-md bg-neutral-900 border border-white/10 rounded-2xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center space-y-6 animate-scaleIn">
+            {/* Warning Icon */}
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-lg">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+
+            {/* Error Message */}
+            <div className="space-y-2">
+              <h3 className="text-base font-bold text-white font-mono tracking-tight uppercase">
+                AI Docket Extraction Incomplete
+              </h3>
+              <p className="text-xs text-white/70">
+                {extractionError || 'The AI extraction timed out or could not parse all fields. Your scanned document image has been preserved.'}
+              </p>
+            </div>
+
+            {/* Preserved Thumbnail */}
+            {(lastCroppedDataUrl || cropSourceUrl) && (
+              <div className="relative w-32 h-24 rounded-lg overflow-hidden border border-white/10 shadow bg-black/40">
+                <img
+                  src={lastCroppedDataUrl || cropSourceUrl || ''}
+                  alt="Preserved Cropped Scan"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-x-0 bottom-0 bg-black/70 py-0.5 text-[10px] text-white/80 font-mono">
+                  Preserved Image
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="w-full flex flex-col gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={handleRetryExtraction}
+                disabled={isExtracting}
+                id="btn-retry-ai-extraction"
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer shadow-lg disabled:opacity-50"
+              >
+                {isExtracting ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 text-emerald-200" />
+                )}
+                <span>{isExtracting ? 'Retrying Extraction...' : 'Retry AI Extraction'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleProceedWithManualEntry}
+                id="btn-manual-entry-fallback"
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer border border-white/10"
+              >
+                <FileText className="w-4 h-4 text-white/70" />
+                <span>Keep Image & Enter Details Manually</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPhase('cropping')}
+                className="text-xs text-white/50 hover:text-white/80 pt-1 cursor-pointer transition-colors"
+              >
+                ← Adjust Crop Area or Re-take Photo
+              </button>
             </div>
           </div>
         </div>

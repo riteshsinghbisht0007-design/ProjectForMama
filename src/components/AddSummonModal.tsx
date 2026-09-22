@@ -864,7 +864,17 @@ export const AddSummonModal: React.FC<AddSummonModalProps> = ({
     }, 1800);
 
     try {
-      const result = await scanSummonDocument(dataUrl, mime, sessionId, ocrController.signal);
+      const result = await scanSummonDocument(
+        dataUrl,
+        mime,
+        sessionId,
+        ocrController.signal,
+        (stageText) => {
+          if (currentScanSessionIdRef.current === sessionId) {
+            setExtractStatusText(stageText);
+          }
+        }
+      );
       clearTimeout(timer1);
       clearTimeout(timer2);
 

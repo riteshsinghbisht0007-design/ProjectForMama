@@ -119,17 +119,29 @@
       "schema": { "$ref": "#/entities/User" },
       "description": "Officer profiles and user telemetry"
     },
+    "/users/{userId}/summons/{summonId}": {
+      "schema": { "$ref": "#/entities/Summon" },
+      "description": "Account-isolated judicial summons and warrants belonging to the authenticated officer"
+    },
+    "/users/{userId}/witnesses/{witnessId}": {
+      "schema": { "$ref": "#/entities/WitnessPerson" },
+      "description": "Account-isolated witnesses, respondents, and persons directory"
+    },
+    "/users/{userId}/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/AppReview" },
+      "description": "Account-isolated officer app ratings and feedback"
+    },
     "/summons/{summonId}": {
       "schema": { "$ref": "#/entities/Summon" },
-      "description": "Judicial summons and warrants tracked by the officer"
+      "description": "Top-level summons collection for indexed lookups"
     },
     "/witnesses/{witnessId}": {
       "schema": { "$ref": "#/entities/WitnessPerson" },
-      "description": "Witnesses, respondents, and persons directory"
+      "description": "Top-level witnesses directory"
     },
     "/reviews/{userId}": {
       "schema": { "$ref": "#/entities/AppReview" },
-      "description": "Officer app ratings and feedback submissions"
+      "description": "Top-level officer reviews"
     }
   }
 }

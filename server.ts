@@ -601,8 +601,8 @@ async function startServer() {
     try {
       let summons = await db.collection('summons').find({ userId: req.user.uid }).toArray();
       
-      // Auto-seed starter summons if user has none
-      if (summons.length === 0) {
+      // Auto-seed starter summons ONLY for demo officer account
+      if (summons.length === 0 && (req.user.uid === 'demo-officer-uid' || req.user.email === 'demo@police.gov.in')) {
         const defaultSummons = [
           {
             userId: req.user.uid,
@@ -894,8 +894,8 @@ async function startServer() {
       status: 'ok',
       service: 'judicial-ocr',
       ocrAvailable: isConfigured,
-      primaryModel: 'gemini-3.8-flash',
-      fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest'],
+      primaryModel: 'gemini-3.1-flash-lite',
+      fallbackModels: ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-pro-preview'],
       configured: isConfigured,
       timestamp: new Date().toISOString(),
     });
@@ -952,7 +952,7 @@ async function startServer() {
       }
 
       console.info(
-        `[OCR Service] Processing legal document (${normalizedMime}, ~${Math.round((cleanBase64.length * 3) / 4 / 1024)} KB)...`
+        `[DOCKET] AI request started (session=${sessionId || 'n/a'}, mime=${normalizedMime}, payload=~${Math.round((cleanBase64.length * 3) / 4 / 1024)} KB)`
       );
 
       const ai = new GoogleGenAI({
@@ -1015,18 +1015,26 @@ Return the extraction in this EXACT JSON structure:
 IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the JSON.`;
 
       // High-availability candidate models per Gemini SDK specification
+      // gemini-3.1-flash-lite has the highest throughput and lowest latency
       const candidateModels = [
-        'gemini-3.8-flash',
         'gemini-3.1-flash-lite',
         'gemini-flash-latest',
+        'gemini-3.8-flash',
+        'gemini-3.1-pro-preview',
       ];
       let response: any = null;
       let lastModelError: any = null;
 
       for (const modelName of candidateModels) {
         try {
-          console.info(`[OCR Service] Attempting legal extraction with ${modelName}...`);
-          response = await ai.models.generateContent({
+          console.info(`[DOCKET] Attempting legal extraction with ${modelName}...`);
+          
+          // Enforce 12s per-attempt timeout to prevent indefinite hangs
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Model ${modelName} timed out after 12000ms`)), 12000)
+          );
+
+          const generatePromise = ai.models.generateContent({
             model: modelName,
             contents: [
               {
@@ -1046,23 +1054,14 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
               responseMimeType: 'application/json',
             },
           });
-          console.info(`[OCR Service] Extraction succeeded with model: ${modelName}`);
+
+          response = await Promise.race([generatePromise, timeoutPromise]);
+          console.info(`[DOCKET] AI response received from model: ${modelName} in ${Date.now() - startTime}ms`);
           break; // Succeeded!
         } catch (candidateErr: any) {
           lastModelError = candidateErr;
           const errMsg = candidateErr?.message || '';
-          const isTransient =
-            errMsg.includes('503') ||
-            errMsg.includes('high demand') ||
-            errMsg.includes('429') ||
-            candidateErr?.status === 503 ||
-            candidateErr?.status === 429;
-
-          if (isTransient) {
-            console.info(`[OCR Service] Model ${modelName} experiencing peak load (${isTransient ? '503 High Demand' : 'busy'}). Cascading immediately to next candidate...`);
-          } else {
-            console.info(`[OCR Service] Model ${modelName} returned: ${errMsg.slice(0, 120)}. Cascading to next candidate...`);
-          }
+          console.info(`[DOCKET] Candidate model ${modelName} returned transient status (${errMsg.slice(0, 80)}). Cascading to next candidate...`);
         }
       }
 
@@ -1070,21 +1069,31 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
         throw lastModelError;
       }
 
-      const rawText = response.text || '';
+      const rawText = (response?.text || '').trim();
       const elapsed = Date.now() - startTime;
-      console.info(`[OCR Service] Extraction completed in ${elapsed}ms`);
+      console.info(`[DOCKET] AI response received in ${elapsed}ms`);
 
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      console.info(`[DOCKET] JSON parsing started`);
+      // Clean JSON string (strip markdown fences if present)
+      let cleanedJson = rawText;
+      if (cleanedJson.startsWith('```json')) {
+        cleanedJson = cleanedJson.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      } else if (cleanedJson.startsWith('```')) {
+        cleanedJson = cleanedJson.replace(/^```\s*/, '').replace(/\s*```$/, '');
+      }
+
+      const jsonMatch = cleanedJson.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
           const parsed = JSON.parse(jsonMatch[0]);
+          console.info(`[DOCKET] validation completed: ${Object.keys(parsed.fields || {}).length} fields extracted`);
           return res.status(200).json({ ...parsed, sessionId });
         } catch (jsonParseErr) {
-          console.warn('[OCR Service] JSON parse error on matched block, returning rawText payload:', jsonParseErr);
-          return res.status(200).json({ rawText, sessionId });
+          console.warn('[DOCKET] JSON parse error on matched block, fallback rawText:', jsonParseErr);
+          return res.status(200).json({ rawText, sessionId, isReadable: true });
         }
       } else {
-        return res.status(200).json({ rawText, sessionId });
+        return res.status(200).json({ rawText, sessionId, isReadable: Boolean(rawText.length > 0) });
       }
     } catch (err: any) {
       console.error('[OCR Service] Server-side OCR exception:', err);
