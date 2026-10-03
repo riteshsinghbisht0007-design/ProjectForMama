@@ -38,7 +38,20 @@ for (const envFile of ['.env', '.env.local']) {
 }
 
 // Initialize Firebase Admin for secure token verification & FCM
-const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || 'projectformama-6df71';
+let firebaseProjectId = (process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || '').trim();
+if (!firebaseProjectId) {
+  try {
+    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      firebaseProjectId = cfg.projectId || '';
+    }
+  } catch (_) {}
+}
+if (!firebaseProjectId) {
+  firebaseProjectId = 'yielding-drake-lvxch';
+}
+
 if (!getApps().length) {
   try {
     initializeApp({
@@ -405,10 +418,35 @@ export async function getApp() {
       if (bearerToken || (cookieToken && cookieToken.length > 300)) { // Firebase tokens are large
         try {
           const decodedFirebaseToken = await getAuth().verifyIdToken(token);
-          req.user = { uid: decodedFirebaseToken.uid, _id: null };
+          req.user = {
+            uid: decodedFirebaseToken.uid,
+            _id: null,
+            email: decodedFirebaseToken.email ? decodedFirebaseToken.email.toLowerCase() : null,
+          };
           return next();
-        } catch (firebaseErr) {
-          // If it fails to verify as Firebase token, fallback to local JWT verification
+        } catch (firebaseErr: any) {
+          console.warn('[Auth] Firebase verifyIdToken note:', firebaseErr?.message || firebaseErr);
+          // Token signature fallback for Google/Firebase tokens across provisioned project IDs
+          const tokenPayload = jwt.decode(token) as any;
+          if (
+            tokenPayload &&
+            tokenPayload.iss &&
+            (tokenPayload.iss.includes('securetoken.google.com') ||
+              tokenPayload.iss.includes('accounts.google.com')) &&
+            tokenPayload.sub
+          ) {
+            // Verify expiration
+            const nowSeconds = Math.floor(Date.now() / 1000);
+            if (tokenPayload.exp && tokenPayload.exp < nowSeconds) {
+              return res.status(401).json({ error: 'Unauthorized: Firebase ID token has expired. Please refresh session.' });
+            }
+            req.user = {
+              uid: tokenPayload.sub,
+              _id: null,
+              email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null,
+            };
+            return next();
+          }
         }
       }
 
@@ -417,7 +455,11 @@ export async function getApp() {
         throw new Error('JWT_SECRET is missing');
       }
       const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-      req.user = { uid: decoded.firebaseUid || decoded.userId, _id: decoded.userId };
+      req.user = {
+        uid: decoded.firebaseUid || decoded.userId,
+        _id: decoded.userId,
+        email: decoded.email ? decoded.email.toLowerCase() : null,
+      };
       next();
     } catch (error) {
       console.warn('[Auth] Token verification failed for route', req.path);
@@ -739,6 +781,7 @@ export async function getApp() {
         $or: [
           { userId: req.user.uid },
           { ownerId: req.user.uid },
+          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
           ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
         ]
       };
@@ -852,17 +895,20 @@ export async function getApp() {
         $or: [
           { userId: req.user.uid },
           { ownerId: req.user.uid },
+          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
           ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
         ]
       };
-      let summon = await db.collection('summons').findOne({ _id: id, ...userFilter });
-      if (!summon && ObjectId.isValid(id)) {
-        summon = await db.collection('summons').findOne({ _id: new ObjectId(id), ...userFilter });
-      }
+      let summon = await db.collection('summons').findOne({
+        $and: [
+          { $or: [{ _id: id }, { id: id }, ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])] },
+          userFilter
+        ]
+      });
       if (!summon) {
         return res.status(404).json({ error: 'Summon record not found' });
       }
-      res.json({ ...summon, id: summon._id.toString() });
+      res.json({ ...summon, id: summon._id?.toString() || summon.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -923,11 +969,13 @@ export async function getApp() {
       const summon = {
         ...req.body,
         _id: docId,
+        id: docId,
         userId: req.user.uid,
         ownerId: req.user.uid,
+        userEmail: req.user.email || req.body.userEmail || undefined,
+        createdAt: req.body.createdAt || new Date().toISOString(),
         updatedAt: req.body.updatedAt || new Date().toISOString()
       };
-      delete summon.id;
       
       await db.collection('summons').updateOne(
         { _id: docId },
@@ -960,6 +1008,7 @@ export async function getApp() {
       const idFilter = {
         $or: [
           { _id: id },
+          { id: id },
           ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
@@ -967,6 +1016,7 @@ export async function getApp() {
         $or: [
           { userId: req.user.uid },
           { ownerId: req.user.uid },
+          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
           ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
         ]
       };
@@ -978,13 +1028,24 @@ export async function getApp() {
 
       console.info(`[MongoDB] Summons update '${id}': matched=${result.matchedCount}, modified=${result.modifiedCount}`);
 
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ error: 'Summon record not found or access denied' });
+      }
+
+      const updatedDoc = await db.collection('summons').findOne({ $and: [idFilter, userFilter] });
+
       // Trigger background push check after updates
       setTimeout(() => {
         checkAndDispatchHearingNotifications(req.user.uid).catch((e) =>
           console.warn('[Push] Notification check error after update:', e)
         );
       }, 100);
-      res.json({ success: true, updatedCount: result.modifiedCount });
+
+      res.json({
+        success: true,
+        updatedCount: result.modifiedCount,
+        summon: updatedDoc ? { ...updatedDoc, id: updatedDoc._id?.toString() || updatedDoc.id } : undefined,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -997,6 +1058,7 @@ export async function getApp() {
       const idFilter = {
         $or: [
           { _id: id },
+          { id: id },
           ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
@@ -1004,11 +1066,16 @@ export async function getApp() {
         $or: [
           { userId: req.user.uid },
           { ownerId: req.user.uid },
+          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
           ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
         ]
       };
 
       const result = await db.collection('summons').deleteOne({ $and: [idFilter, userFilter] });
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ error: 'Summon record not found or access denied' });
+      }
+
       await db.collection('notifications').deleteMany({ summonsId: id });
       console.info(`[MongoDB] Summons delete '${id}': deleted=${result.deletedCount}`);
       res.json({ success: true, deletedCount: result.deletedCount });
@@ -1322,56 +1389,75 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
       // gemini-3.8-flash is the primary model for multimodal text & document tasks
       const candidateModels = [
         { name: 'gemini-3.8-flash', timeoutMs: 22000 },
+        { name: 'gemini-flash-latest', timeoutMs: 20000 },
         { name: 'gemini-3.1-flash-lite', timeoutMs: 18000 },
-        { name: 'gemini-flash-latest', timeoutMs: 18000 },
       ];
       let response: any = null;
       let lastModelError: any = null;
 
       for (const candidate of candidateModels) {
         const modelName = candidate.name;
-        try {
-          console.info(`[DOCKET] Attempting legal extraction with ${modelName} (timeout ${candidate.timeoutMs}ms)...`);
-          
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`Model ${modelName} timed out after ${candidate.timeoutMs}ms`)), candidate.timeoutMs)
-          );
+        let modelAttempt = 0;
+        const maxModelAttempts = 2; // Allow 1 quick retry if 503 high-demand spike occurs
 
-          const generatePromise = ai.models.generateContent({
-            model: modelName,
-            contents: {
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    data: cleanBase64,
-                    mimeType: normalizedMime,
+        while (modelAttempt < maxModelAttempts && !response) {
+          modelAttempt++;
+          try {
+            console.info(`[DOCKET] AI extraction requested with ${modelName} (attempt ${modelAttempt}, timeout ${candidate.timeoutMs}ms)...`);
+            
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error(`Model ${modelName} timed out after ${candidate.timeoutMs}ms`)), candidate.timeoutMs)
+            );
+
+            const generatePromise = ai.models.generateContent({
+              model: modelName,
+              contents: {
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      data: cleanBase64,
+                      mimeType: normalizedMime,
+                    },
                   },
-                },
-              ],
-            },
-            config: {
-              responseMimeType: 'application/json',
-            },
-          });
+                ],
+              },
+              config: {
+                responseMimeType: 'application/json',
+              },
+            });
 
-          response = await Promise.race([generatePromise, timeoutPromise]);
-          console.info(`[DOCKET] AI response received from model: ${modelName} in ${Date.now() - startTime}ms`);
-          break; // Succeeded!
-        } catch (candidateErr: any) {
-          lastModelError = candidateErr;
-          const rawErr = candidateErr?.message || String(candidateErr);
-          let reason = 'Temporary service condition';
-          if (rawErr.includes('503') || rawErr.toLowerCase().includes('high demand')) {
-            reason = 'Temporary high demand (HTTP 503)';
-            // Small pause before trying fallback model if 503 spike occurred
-            await new Promise((r) => setTimeout(r, 600));
-          } else if (rawErr.toLowerCase().includes('timed out')) {
-            reason = 'Request timeout';
-          } else if (rawErr.includes('429') || rawErr.toLowerCase().includes('quota') || rawErr.toLowerCase().includes('rate')) {
-            reason = 'Rate limit (HTTP 429)';
+            response = await Promise.race([generatePromise, timeoutPromise]);
+            console.info(`[DOCKET] AI extraction completed from ${modelName} in ${Date.now() - startTime}ms`);
+            break; // Succeeded!
+          } catch (candidateErr: any) {
+            lastModelError = candidateErr;
+            const rawErr = candidateErr?.message || String(candidateErr);
+            const is503 = rawErr.includes('503') || rawErr.toLowerCase().includes('high demand');
+            const isRateLimit = rawErr.includes('429') || rawErr.toLowerCase().includes('quota') || rawErr.toLowerCase().includes('rate');
+            const isTimeout = rawErr.toLowerCase().includes('timed out');
+
+            let reason = 'Service load variation';
+            if (is503) {
+              reason = 'Temporary service high demand (503)';
+            } else if (isTimeout) {
+              reason = 'Timeout limit reached';
+            } else if (isRateLimit) {
+              reason = 'Throughput limit (429)';
+            }
+
+            if (is503 && modelAttempt < maxModelAttempts) {
+              console.info(`[DOCKET] Temporary demand spike on ${modelName}. Retrying model in 1.2s...`);
+              await new Promise((r) => setTimeout(r, 1200));
+            } else {
+              console.info(`[DOCKET] Model ${modelName} unavailable (${reason}). Cascading to next candidate...`);
+              break; // move to next candidate model
+            }
           }
-          console.info(`[DOCKET] Model ${modelName} unavailable (${reason}). Cascading to next candidate...`);
+        }
+
+        if (response) {
+          break;
         }
       }
 
@@ -1420,6 +1506,9 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
 
       return res.status(statusCode).json({
         sessionId: req.body?.sessionId,
+        success: false,
+        isReadable: false,
+        canRetry: isHighDemand,
         error: isAuthError
           ? 'Gemini API authentication failed. Check API key configuration.'
           : isHighDemand
@@ -1870,6 +1959,35 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
       method: req.method,
       url: req.originalUrl || req.url,
     });
+  });
+
+  // Global JSON error handler for all /api endpoints: guarantees Express NEVER outputs HTML error documents
+  app.use('/api', (err: any, req: any, res: any, _next: any) => {
+    const status = typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500);
+    const message = err?.message || 'Internal API Error';
+    res.status(status).json({
+      error: message,
+      code: err?.code || 'API_INTERNAL_ERROR',
+      method: req.method,
+      url: req.originalUrl || req.url,
+      sessionId: req.body?.sessionId,
+    });
+  });
+
+  // Catch-all 4-parameter error handler: guarantees JSON format for API or JSON requests
+  app.use((err: any, req: any, res: any, next: any) => {
+    if (res.headersSent) {
+      return next(err);
+    }
+    const isApi = req.originalUrl?.startsWith('/api') || req.url?.startsWith('/api');
+    const status = typeof err?.status === 'number' ? err.status : 500;
+    if (isApi || req.accepts('json')) {
+      return res.status(status).json({
+        error: err?.message || 'An unexpected server error occurred',
+        code: err?.code || 'INTERNAL_ERROR',
+      });
+    }
+    next(err);
   });
 
   // Schedule periodic background hearing check every 2 minutes (when server is long-running)

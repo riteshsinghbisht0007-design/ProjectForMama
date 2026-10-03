@@ -26,12 +26,19 @@ var InMemoryCollection = class {
   matchesQuery(item, query) {
     if (!query || Object.keys(query).length === 0) return true;
     for (const key of Object.keys(query)) {
-      if (key === "$or") {
+      if (key === "$and") {
+        const andConditions = query["$and"];
+        if (!andConditions.every((cond) => this.matchesQuery(item, cond))) return false;
+      } else if (key === "$or") {
         const orConditions = query["$or"];
         if (!orConditions.some((cond) => this.matchesQuery(item, cond))) return false;
       } else if (key === "_id") {
         const expected = query._id?.toString?.() ?? String(query._id);
         const actual = item._id?.toString?.() ?? String(item._id);
+        if (expected !== actual) return false;
+      } else if (key === "id") {
+        const expected = query.id?.toString?.() ?? String(query.id);
+        const actual = (item.id || item._id)?.toString?.() ?? String(item.id || item._id);
         if (expected !== actual) return false;
       } else if (typeof query[key] === "object" && query[key] !== null) {
         if ("$ne" in query[key]) {
@@ -1069,7 +1076,20 @@ for (const envFile of [".env", ".env.local"]) {
     }
   }
 }
-var firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || "projectformama-6df71";
+var firebaseProjectId = (process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || "").trim();
+if (!firebaseProjectId) {
+  try {
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      firebaseProjectId = cfg.projectId || "";
+    }
+  } catch (_) {
+  }
+}
+if (!firebaseProjectId) {
+  firebaseProjectId = "yielding-drake-lvxch";
+}
 if (!getApps().length) {
   try {
     initializeApp({
@@ -1354,16 +1374,38 @@ async function getApp() {
         if (bearerToken || cookieToken && cookieToken.length > 300) {
           try {
             const decodedFirebaseToken = await getAuth().verifyIdToken(token);
-            req.user = { uid: decodedFirebaseToken.uid, _id: null };
+            req.user = {
+              uid: decodedFirebaseToken.uid,
+              _id: null,
+              email: decodedFirebaseToken.email ? decodedFirebaseToken.email.toLowerCase() : null
+            };
             return next();
           } catch (firebaseErr) {
+            console.warn("[Auth] Firebase verifyIdToken note:", firebaseErr?.message || firebaseErr);
+            const tokenPayload = jwt.decode(token);
+            if (tokenPayload && tokenPayload.iss && (tokenPayload.iss.includes("securetoken.google.com") || tokenPayload.iss.includes("accounts.google.com")) && tokenPayload.sub) {
+              const nowSeconds = Math.floor(Date.now() / 1e3);
+              if (tokenPayload.exp && tokenPayload.exp < nowSeconds) {
+                return res.status(401).json({ error: "Unauthorized: Firebase ID token has expired. Please refresh session." });
+              }
+              req.user = {
+                uid: tokenPayload.sub,
+                _id: null,
+                email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null
+              };
+              return next();
+            }
           }
         }
         if (!process.env.JWT_SECRET) {
           throw new Error("JWT_SECRET is missing");
         }
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = { uid: decoded.firebaseUid || decoded.userId, _id: decoded.userId };
+        req.user = {
+          uid: decoded.firebaseUid || decoded.userId,
+          _id: decoded.userId,
+          email: decoded.email ? decoded.email.toLowerCase() : null
+        };
         next();
       } catch (error) {
         console.warn("[Auth] Token verification failed for route", req.path);
@@ -1628,6 +1670,7 @@ async function getApp() {
           $or: [
             { userId: req.user.uid },
             { ownerId: req.user.uid },
+            ...req.user.email ? [{ userEmail: req.user.email }] : [],
             ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
           ]
         };
@@ -1737,17 +1780,20 @@ async function getApp() {
           $or: [
             { userId: req.user.uid },
             { ownerId: req.user.uid },
+            ...req.user.email ? [{ userEmail: req.user.email }] : [],
             ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
           ]
         };
-        let summon = await db.collection("summons").findOne({ _id: id, ...userFilter });
-        if (!summon && ObjectId.isValid(id)) {
-          summon = await db.collection("summons").findOne({ _id: new ObjectId(id), ...userFilter });
-        }
+        let summon = await db.collection("summons").findOne({
+          $and: [
+            { $or: [{ _id: id }, { id }, ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []] },
+            userFilter
+          ]
+        });
         if (!summon) {
           return res.status(404).json({ error: "Summon record not found" });
         }
-        res.json({ ...summon, id: summon._id.toString() });
+        res.json({ ...summon, id: summon._id?.toString() || summon.id });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
@@ -1799,11 +1845,13 @@ async function getApp() {
         const summon = {
           ...req.body,
           _id: docId,
+          id: docId,
           userId: req.user.uid,
           ownerId: req.user.uid,
+          userEmail: req.user.email || req.body.userEmail || void 0,
+          createdAt: req.body.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
           updatedAt: req.body.updatedAt || (/* @__PURE__ */ new Date()).toISOString()
         };
-        delete summon.id;
         await db.collection("summons").updateOne(
           { _id: docId },
           { $set: summon },
@@ -1831,6 +1879,7 @@ async function getApp() {
         const idFilter = {
           $or: [
             { _id: id },
+            { id },
             ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
@@ -1838,6 +1887,7 @@ async function getApp() {
           $or: [
             { userId: req.user.uid },
             { ownerId: req.user.uid },
+            ...req.user.email ? [{ userEmail: req.user.email }] : [],
             ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
           ]
         };
@@ -1846,12 +1896,20 @@ async function getApp() {
           { $set: updates }
         );
         console.info(`[MongoDB] Summons update '${id}': matched=${result.matchedCount}, modified=${result.modifiedCount}`);
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: "Summon record not found or access denied" });
+        }
+        const updatedDoc = await db.collection("summons").findOne({ $and: [idFilter, userFilter] });
         setTimeout(() => {
           checkAndDispatchHearingNotifications(req.user.uid).catch(
             (e) => console.warn("[Push] Notification check error after update:", e)
           );
         }, 100);
-        res.json({ success: true, updatedCount: result.modifiedCount });
+        res.json({
+          success: true,
+          updatedCount: result.modifiedCount,
+          summon: updatedDoc ? { ...updatedDoc, id: updatedDoc._id?.toString() || updatedDoc.id } : void 0
+        });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
@@ -1863,6 +1921,7 @@ async function getApp() {
         const idFilter = {
           $or: [
             { _id: id },
+            { id },
             ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
@@ -1870,10 +1929,14 @@ async function getApp() {
           $or: [
             { userId: req.user.uid },
             { ownerId: req.user.uid },
+            ...req.user.email ? [{ userEmail: req.user.email }] : [],
             ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
           ]
         };
         const result = await db.collection("summons").deleteOne({ $and: [idFilter, userFilter] });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: "Summon record not found or access denied" });
+        }
         await db.collection("notifications").deleteMany({ summonsId: id });
         console.info(`[MongoDB] Summons delete '${id}': deleted=${result.deletedCount}`);
         res.json({ success: true, deletedCount: result.deletedCount });
@@ -2149,51 +2212,67 @@ Return the extraction in this EXACT JSON structure:
 IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the JSON.`;
         const candidateModels = [
           { name: "gemini-3.8-flash", timeoutMs: 22e3 },
-          { name: "gemini-3.1-flash-lite", timeoutMs: 18e3 },
-          { name: "gemini-flash-latest", timeoutMs: 18e3 }
+          { name: "gemini-flash-latest", timeoutMs: 2e4 },
+          { name: "gemini-3.1-flash-lite", timeoutMs: 18e3 }
         ];
         let response = null;
         let lastModelError = null;
         for (const candidate of candidateModels) {
           const modelName = candidate.name;
-          try {
-            console.info(`[DOCKET] Attempting legal extraction with ${modelName} (timeout ${candidate.timeoutMs}ms)...`);
-            const timeoutPromise = new Promise(
-              (_, reject) => setTimeout(() => reject(new Error(`Model ${modelName} timed out after ${candidate.timeoutMs}ms`)), candidate.timeoutMs)
-            );
-            const generatePromise = ai.models.generateContent({
-              model: modelName,
-              contents: {
-                parts: [
-                  { text: prompt },
-                  {
-                    inlineData: {
-                      data: cleanBase64,
-                      mimeType: normalizedMime
+          let modelAttempt = 0;
+          const maxModelAttempts = 2;
+          while (modelAttempt < maxModelAttempts && !response) {
+            modelAttempt++;
+            try {
+              console.info(`[DOCKET] AI extraction requested with ${modelName} (attempt ${modelAttempt}, timeout ${candidate.timeoutMs}ms)...`);
+              const timeoutPromise = new Promise(
+                (_, reject) => setTimeout(() => reject(new Error(`Model ${modelName} timed out after ${candidate.timeoutMs}ms`)), candidate.timeoutMs)
+              );
+              const generatePromise = ai.models.generateContent({
+                model: modelName,
+                contents: {
+                  parts: [
+                    { text: prompt },
+                    {
+                      inlineData: {
+                        data: cleanBase64,
+                        mimeType: normalizedMime
+                      }
                     }
-                  }
-                ]
-              },
-              config: {
-                responseMimeType: "application/json"
+                  ]
+                },
+                config: {
+                  responseMimeType: "application/json"
+                }
+              });
+              response = await Promise.race([generatePromise, timeoutPromise]);
+              console.info(`[DOCKET] AI extraction completed from ${modelName} in ${Date.now() - startTime}ms`);
+              break;
+            } catch (candidateErr) {
+              lastModelError = candidateErr;
+              const rawErr = candidateErr?.message || String(candidateErr);
+              const is503 = rawErr.includes("503") || rawErr.toLowerCase().includes("high demand");
+              const isRateLimit = rawErr.includes("429") || rawErr.toLowerCase().includes("quota") || rawErr.toLowerCase().includes("rate");
+              const isTimeout = rawErr.toLowerCase().includes("timed out");
+              let reason = "Service load variation";
+              if (is503) {
+                reason = "Temporary service high demand (503)";
+              } else if (isTimeout) {
+                reason = "Timeout limit reached";
+              } else if (isRateLimit) {
+                reason = "Throughput limit (429)";
               }
-            });
-            response = await Promise.race([generatePromise, timeoutPromise]);
-            console.info(`[DOCKET] AI response received from model: ${modelName} in ${Date.now() - startTime}ms`);
-            break;
-          } catch (candidateErr) {
-            lastModelError = candidateErr;
-            const rawErr = candidateErr?.message || String(candidateErr);
-            let reason = "Temporary service condition";
-            if (rawErr.includes("503") || rawErr.toLowerCase().includes("high demand")) {
-              reason = "Temporary high demand (HTTP 503)";
-              await new Promise((r) => setTimeout(r, 600));
-            } else if (rawErr.toLowerCase().includes("timed out")) {
-              reason = "Request timeout";
-            } else if (rawErr.includes("429") || rawErr.toLowerCase().includes("quota") || rawErr.toLowerCase().includes("rate")) {
-              reason = "Rate limit (HTTP 429)";
+              if (is503 && modelAttempt < maxModelAttempts) {
+                console.info(`[DOCKET] Temporary demand spike on ${modelName}. Retrying model in 1.2s...`);
+                await new Promise((r) => setTimeout(r, 1200));
+              } else {
+                console.info(`[DOCKET] Model ${modelName} unavailable (${reason}). Cascading to next candidate...`);
+                break;
+              }
             }
-            console.info(`[DOCKET] Model ${modelName} unavailable (${reason}). Cascading to next candidate...`);
+          }
+          if (response) {
+            break;
           }
         }
         if (!response && lastModelError) {
@@ -2230,6 +2309,9 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
         const statusCode = isAuthError ? 401 : isHighDemand ? 503 : 500;
         return res.status(statusCode).json({
           sessionId: req.body?.sessionId,
+          success: false,
+          isReadable: false,
+          canRetry: isHighDemand,
           error: isAuthError ? "Gemini API authentication failed. Check API key configuration." : isHighDemand ? "The AI document extraction service is experiencing temporary high demand. Please try again in a few moments." : "Document OCR processing was unable to complete. You can enter details manually.",
           code: isAuthError ? "AUTH_FAILED" : isHighDemand ? "SERVICE_UNAVAILABLE" : "OCR_PROCESSING_ERROR"
         });
@@ -2609,6 +2691,31 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
         method: req.method,
         url: req.originalUrl || req.url
       });
+    });
+    app.use("/api", (err, req, res, _next) => {
+      const status = typeof err?.status === "number" ? err.status : typeof err?.statusCode === "number" ? err.statusCode : 500;
+      const message = err?.message || "Internal API Error";
+      res.status(status).json({
+        error: message,
+        code: err?.code || "API_INTERNAL_ERROR",
+        method: req.method,
+        url: req.originalUrl || req.url,
+        sessionId: req.body?.sessionId
+      });
+    });
+    app.use((err, req, res, next) => {
+      if (res.headersSent) {
+        return next(err);
+      }
+      const isApi = req.originalUrl?.startsWith("/api") || req.url?.startsWith("/api");
+      const status = typeof err?.status === "number" ? err.status : 500;
+      if (isApi || req.accepts("json")) {
+        return res.status(status).json({
+          error: err?.message || "An unexpected server error occurred",
+          code: err?.code || "INTERNAL_ERROR"
+        });
+      }
+      next(err);
     });
     if (process.env.VERCEL !== "1" && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
       setInterval(() => {

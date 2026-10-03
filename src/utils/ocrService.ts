@@ -434,27 +434,26 @@ export const scanSummonDocument = async (
     console.info(`[DOCKET] AI response received in ${aiReqDuration}ms (HTTP ${res.status})`);
 
     const contentType = res.headers.get('content-type') || '';
-    const isJson = contentType.includes('application/json');
+    const rawBody = await res.text().catch(() => '');
+    const isHtmlResponse =
+      rawBody.trim().startsWith('<') ||
+      rawBody.toLowerCase().includes('<!doctype') ||
+      contentType.includes('text/html');
 
-    if (res.ok && isJson) {
-      onProgressStage?.('Validating docket particulars...', 90, 4);
-      console.info(`[DOCKET] JSON parsing started`);
-
-      let data: any = null;
+    let parsedData: any = null;
+    if (!isHtmlResponse && rawBody.trim()) {
       try {
-        data = await res.json();
-      } catch (jsonErr: any) {
-        console.info(`[DOCKET] Received non-JSON or invalid response: ${jsonErr?.message || jsonErr}`);
-        return {
-          sessionId,
-          success: false,
-          isAutofilled: false,
-          isUnreadable: true,
-          message: 'Received an unexpected response format from server. You can enter details manually.',
-          data: parseSummonTextStrict(''),
-        };
+        parsedData = JSON.parse(rawBody);
+      } catch (_) {
+        parsedData = null;
       }
+    }
 
+    if (res.ok && parsedData) {
+      onProgressStage?.('Validating docket particulars...', 90, 4);
+      console.info(`[DOCKET] Docket validation started`);
+
+      const data = parsedData;
       const responseSessionId = data?.sessionId || sessionId;
 
       // Extract raw or structured fields safely
@@ -593,15 +592,7 @@ export const scanSummonDocument = async (
         data: extractedData,
       };
     } else {
-      const contentType = res.headers.get('content-type') || '';
-      const isHtmlResponse = contentType.includes('text/html');
-
-      let errJson: any = {};
-      if (contentType.includes('application/json')) {
-        errJson = await res.json().catch(() => ({}));
-      } else {
-        console.info(`[DOCKET] Server responded with non-JSON (${contentType}, status=${res.status}).`);
-      }
+      const errJson: any = parsedData || {};
 
       console.info(`[DOCKET] Server responded with HTTP ${res.status}: ${errJson?.code || errJson?.error || 'response handled'}`);
 
@@ -609,21 +600,21 @@ export const scanSummonDocument = async (
       if (!errorMsg) {
         if (res.status === 404) {
           errorMsg = isHtmlResponse
-            ? 'OCR backend route was not reached (HTTP 404 HTML). Please verify your latest Vercel deployment has completed.'
+            ? 'OCR backend route was not reached. Please verify your latest deployment has completed.'
             : 'OCR backend endpoint was not found (HTTP 404).';
         } else if (res.status === 413) {
           errorMsg = 'Image file is too large for transmission (>4.5MB). Please retake or crop tighter.';
         } else if (res.status === 503) {
           errorMsg = errJson.code === 'API_KEY_NOT_CONFIGURED'
-            ? 'Gemini API key is not configured on your Vercel deployment. Please add GEMINI_API_KEY in Vercel Project Settings > Environment Variables.'
+            ? 'Gemini API key is not configured on your deployment. Please add GEMINI_API_KEY in environment variables.'
             : 'Gemini AI service is temporarily experiencing high demand. You can retry shortly or enter details manually.';
         } else if (res.status === 401 || res.status === 403) {
-          errorMsg = 'Gemini API authentication failed. Please verify your GEMINI_API_KEY in Vercel environment variables.';
+          errorMsg = 'Gemini API authentication failed. Please verify your GEMINI_API_KEY in environment variables.';
         } else if (res.status === 500) {
-          errorMsg = 'Document OCR service encountered a temporary error. You can retry shortly or enter details manually.';
+          errorMsg = 'Document OCR service encountered a temporary condition. You can retry shortly or enter details manually.';
         } else {
           errorMsg = isHtmlResponse
-            ? `Server returned an unexpected HTTP ${res.status} response. Please redeploy latest Vercel changes.`
+            ? `Server returned an unexpected HTTP ${res.status} response. Please redeploy latest changes.`
             : 'Unable to read this document. Please ensure the summon image is clear and well-lit.';
         }
       }
@@ -642,15 +633,20 @@ export const scanSummonDocument = async (
     if (externalSignal) {
       externalSignal.removeEventListener('abort', abortListener);
     }
-    console.info(`[DOCKET] Extraction notice: ${err?.message || err}`);
+    const rawMsg = err?.message || String(err);
+    const isTimeout = err?.name === 'AbortError' || rawMsg.toLowerCase().includes('timed out');
+    const isNetwork = rawMsg.toLowerCase().includes('fetch') || rawMsg.toLowerCase().includes('network');
+    console.info(`[DOCKET] Extraction pipeline completed: ${isTimeout ? 'request timeout' : isNetwork ? 'network condition' : 'handled'}`);
 
     let failMessage = 'Document OCR scan failed.';
-    if (err.name === 'AbortError' || (err.message && err.message.includes('timed out'))) {
+    if (isTimeout) {
       failMessage = 'Document AI extraction timed out (30s limit). Please check your connection or retry.';
-    } else if (err.message && err.message.includes('Failed to fetch')) {
+    } else if (isNetwork) {
       failMessage = 'Could not connect to OCR server. Please retry in a moment.';
     } else {
-      failMessage = err.message || 'OCR scanner encountered an unexpected error.';
+      failMessage = rawMsg.includes('Unexpected') || rawMsg.includes('<')
+        ? 'OCR service returned an unparseable response. You can enter details manually.'
+        : rawMsg || 'OCR scanner encountered an unexpected condition.';
     }
 
     return {

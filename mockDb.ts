@@ -14,12 +14,19 @@ export class InMemoryCollection {
   public matchesQuery(item: any, query: any): boolean {
     if (!query || Object.keys(query).length === 0) return true;
     for (const key of Object.keys(query)) {
-      if (key === '$or') {
+      if (key === '$and') {
+        const andConditions: any[] = query['$and'];
+        if (!andConditions.every((cond) => this.matchesQuery(item, cond))) return false;
+      } else if (key === '$or') {
         const orConditions: any[] = query['$or'];
         if (!orConditions.some((cond) => this.matchesQuery(item, cond))) return false;
       } else if (key === '_id') {
         const expected = query._id?.toString?.() ?? String(query._id);
         const actual = item._id?.toString?.() ?? String(item._id);
+        if (expected !== actual) return false;
+      } else if (key === 'id') {
+        const expected = query.id?.toString?.() ?? String(query.id);
+        const actual = (item.id || item._id)?.toString?.() ?? String(item.id || item._id);
         if (expected !== actual) return false;
       } else if (typeof query[key] === 'object' && query[key] !== null) {
         if ('$ne' in query[key]) {

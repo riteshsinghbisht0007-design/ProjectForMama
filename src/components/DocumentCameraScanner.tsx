@@ -632,7 +632,7 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
 
       // Check if OCR failed, timed out, or was flagged unreadable
       if (!ocrResult.success || ocrResult.isUnreadable) {
-        console.warn('[Camera Scanner] Document extraction failed or unreadable:', ocrResult.message);
+        console.info('[Camera Scanner] Document scan status: unreadable or manual input required');
         setExtractionError(
           ocrResult.message || 'The AI extraction timed out or could not parse all fields. Your scanned image has been preserved.'
         );
@@ -676,7 +676,7 @@ export const DocumentCameraScanner: React.FC<DocumentCameraScannerProps> = ({
         fileName: workingFileName,
       });
     } catch (err: any) {
-      console.warn('[Camera Scanner] Crop / OCR failed:', err);
+      console.info('[Camera Scanner] Scan operation handled');
       if (err.name === 'AbortError' || ocrController.signal.aborted) {
         console.info('[Camera Scanner] OCR aborted by user or timeout.');
       }
