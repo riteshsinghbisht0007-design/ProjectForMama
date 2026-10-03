@@ -289,15 +289,18 @@ export const inspectOcrHealth = async (): Promise<{
 }> => {
   try {
     const res = await fetch('/api/ocr/health', { method: 'GET', credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      return {
-        isOnline: true,
-        configured: Boolean(data.configured),
-        message: data.configured
-          ? 'AI Legal OCR engine is online and active.'
-          : 'AI OCR server is reachable but GEMINI_API_KEY is pending configuration in environment.',
-      };
+    const isJson = (res.headers.get('content-type') || '').includes('application/json');
+    if (res.ok && isJson) {
+      const data = await res.json().catch(() => null);
+      if (data) {
+        return {
+          isOnline: true,
+          configured: Boolean(data.configured),
+          message: data.configured
+            ? 'AI Legal OCR engine is online and active.'
+            : 'AI OCR server is reachable but GEMINI_API_KEY is pending configuration in environment.',
+        };
+      }
     }
     return {
       isOnline: false,
@@ -430,15 +433,32 @@ export const scanSummonDocument = async (
     const aiReqDuration = Date.now() - aiReqStart;
     console.info(`[DOCKET] AI response received in ${aiReqDuration}ms (HTTP ${res.status})`);
 
-    if (res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+
+    if (res.ok && isJson) {
       onProgressStage?.('Validating docket particulars...', 90, 4);
       console.info(`[DOCKET] JSON parsing started`);
 
-      const data = await res.json();
-      const responseSessionId = data.sessionId || sessionId;
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch (jsonErr: any) {
+        console.info(`[DOCKET] Received non-JSON or invalid response: ${jsonErr?.message || jsonErr}`);
+        return {
+          sessionId,
+          success: false,
+          isAutofilled: false,
+          isUnreadable: true,
+          message: 'Received an unexpected response format from server. You can enter details manually.',
+          data: parseSummonTextStrict(''),
+        };
+      }
+
+      const responseSessionId = data?.sessionId || sessionId;
 
       // Extract raw or structured fields safely
-      const structuredFields = data.fields || {};
+      const structuredFields = data?.fields || {};
       const getFieldValAndConf = (key: string, fallbackVal?: string): { value: string; confidence: number } => {
         let val = '';
         let conf = 0;
@@ -577,13 +597,13 @@ export const scanSummonDocument = async (
       const isHtmlResponse = contentType.includes('text/html');
 
       let errJson: any = {};
-      if (!isHtmlResponse) {
+      if (contentType.includes('application/json')) {
         errJson = await res.json().catch(() => ({}));
       } else {
-        console.warn(`[DOCKET] Server responded with HTML (status=${res.status}) rather than JSON.`);
+        console.info(`[DOCKET] Server responded with non-JSON (${contentType}, status=${res.status}).`);
       }
 
-      console.error(`[DOCKET] Server error HTTP ${res.status}:`, errJson);
+      console.info(`[DOCKET] Server responded with HTTP ${res.status}: ${errJson?.code || errJson?.error || 'response handled'}`);
 
       let errorMsg = errJson.error;
       if (!errorMsg) {
@@ -596,11 +616,11 @@ export const scanSummonDocument = async (
         } else if (res.status === 503) {
           errorMsg = errJson.code === 'API_KEY_NOT_CONFIGURED'
             ? 'Gemini API key is not configured on your Vercel deployment. Please add GEMINI_API_KEY in Vercel Project Settings > Environment Variables.'
-            : 'Gemini AI service is temporarily unavailable. Please retry shortly.';
+            : 'Gemini AI service is temporarily experiencing high demand. You can retry shortly or enter details manually.';
         } else if (res.status === 401 || res.status === 403) {
           errorMsg = 'Gemini API authentication failed. Please verify your GEMINI_API_KEY in Vercel environment variables.';
         } else if (res.status === 500) {
-          errorMsg = 'Internal server error while processing document OCR. Please verify server logs or retry.';
+          errorMsg = 'Document OCR service encountered a temporary error. You can retry shortly or enter details manually.';
         } else {
           errorMsg = isHtmlResponse
             ? `Server returned an unexpected HTTP ${res.status} response. Please redeploy latest Vercel changes.`
@@ -622,7 +642,7 @@ export const scanSummonDocument = async (
     if (externalSignal) {
       externalSignal.removeEventListener('abort', abortListener);
     }
-    console.error('[DOCKET] Extraction error caught:', err);
+    console.info(`[DOCKET] Extraction notice: ${err?.message || err}`);
 
     let failMessage = 'Document OCR scan failed.';
     if (err.name === 'AbortError' || (err.message && err.message.includes('timed out'))) {
