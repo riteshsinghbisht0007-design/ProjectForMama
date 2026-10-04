@@ -127,6 +127,176 @@ function getGeminiApiKey(): string | undefined {
 
 // Shared app instance promise for serverless caching
 let appPromise: Promise<{ app: express.Express; db: any; mongoClient: MongoClient | null }> | null = null;
+let cachedMongoClient: MongoClient | null = null;
+let cachedDb: any = null;
+let fallbackInMemoryDb: any = null;
+
+// Helper to determine the target database name
+function getTargetDbName(): string {
+  if (process.env.MONGODB_DB_NAME && process.env.MONGODB_DB_NAME.trim()) {
+    return process.env.MONGODB_DB_NAME.trim();
+  }
+  if (process.env.MONGODB_DB && process.env.MONGODB_DB.trim()) {
+    return process.env.MONGODB_DB.trim();
+  }
+  if (process.env.MONGODB_URI) {
+    try {
+      const u = process.env.MONGODB_URI.trim();
+      const parsed = new URL(u.replace('mongodb+srv://', 'http://').replace('mongodb://', 'http://'));
+      if (parsed.pathname && parsed.pathname.length > 1) {
+        const cleanName = parsed.pathname.substring(1).split('?')[0].trim();
+        if (cleanName) return cleanName;
+      }
+    } catch (_) {}
+  }
+  return 'summons_app';
+}
+
+// Background index creator
+async function ensureMongoIndexes(database: any) {
+  if (!database || database.isInMemory) return;
+  const safeCreateIndex = async (colName: string, spec: any, options: any = {}) => {
+    try {
+      await database.collection(colName).createIndex(spec, options);
+    } catch (indexErr: any) {
+      // index exists or non-fatal
+    }
+  };
+
+  await safeCreateIndex('summons', { userId: 1 });
+  await safeCreateIndex('summons', { userId: 1, createdAt: -1 });
+  await safeCreateIndex('summons', { userId: 1, updatedAt: -1 });
+  await safeCreateIndex('summons', { ownerId: 1 });
+  await safeCreateIndex('summons', { userEmail: 1 });
+  await safeCreateIndex('reviews', { userId: 1 });
+  await safeCreateIndex('witnesses', { userId: 1 });
+  await safeCreateIndex('users', { email: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex('users', { providerId: 1 }, { sparse: true });
+  await safeCreateIndex('notifications', { userId: 1 });
+  await safeCreateIndex('notifications', { uniqueKey: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex('fcm_tokens', { userId: 1 });
+  await safeCreateIndex('fcm_tokens', { token: 1 }, { unique: true, sparse: true });
+}
+
+// High-availability database connector with connection pooling & auto-reconnect
+export async function getDatabase(): Promise<any> {
+  const targetDbName = getTargetDbName();
+
+  // If already connected and responding, reuse existing connection
+  if (cachedMongoClient && cachedDb) {
+    try {
+      await Promise.race([
+        cachedDb.command({ ping: 1 }),
+        new Promise((_, r) => setTimeout(() => r(new Error('Ping timeout')), 1500))
+      ]);
+      return cachedDb;
+    } catch (pingErr) {
+      console.warn('[MongoDB] Cached connection stale or dropped, reconnecting...');
+      try { await cachedMongoClient.close(); } catch (_) {}
+      cachedMongoClient = null;
+      cachedDb = null;
+    }
+  }
+
+  const rawUri = (process.env.MONGODB_URI || '').trim();
+  if (!rawUri) {
+    if (!fallbackInMemoryDb) {
+      fallbackInMemoryDb = createInMemoryDatabase();
+    }
+    return fallbackInMemoryDb;
+  }
+
+  const connectionStrategies = [
+    {
+      name: 'Serverless Optimized Connection',
+      options: {
+        maxPoolSize: 10,
+        minPoolSize: 0,
+        maxIdleTimeMS: 60000,
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
+      }
+    },
+    {
+      name: 'Direct TLS Compatibility Mode',
+      options: {
+        maxPoolSize: 10,
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+        tls: true,
+        tlsAllowInvalidCertificates: true,
+      }
+    }
+  ];
+
+  for (const strat of connectionStrategies) {
+    try {
+      console.info(`[MongoDB] Connecting to database '${targetDbName}' (${strat.name})...`);
+      const client = new MongoClient(rawUri, strat.options as any);
+      await client.connect();
+      const database = client.db(targetDbName);
+      await database.command({ ping: 1 });
+      console.info(`[MongoDB] Connected successfully to database '${targetDbName}'.`);
+      cachedMongoClient = client;
+      cachedDb = database;
+
+      ensureMongoIndexes(database).catch((idxErr) =>
+        console.warn('[MongoDB] Index creation notice:', idxErr.message)
+      );
+
+      return cachedDb;
+    } catch (connErr: any) {
+      const rawMsg = connErr?.message || String(connErr);
+      const isAtlasIpRestricted = /SSL alert number 80|tlsv1 alert internal error|ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR/i.test(rawMsg);
+      if (isAtlasIpRestricted) {
+        console.info(
+          `[MongoDB] Notice: Remote cluster connection closed by MongoDB Atlas (IP Access List restriction - SSL alert 80). ` +
+          `To allow direct connection from all cloud runtimes, add 0.0.0.0/0 to MongoDB Atlas > Network Access. ` +
+          `Activating local database fallback for '${targetDbName}'.`
+        );
+        break;
+      } else {
+        const cleanMsg = rawMsg
+          .replace(/error:[0-9A-Fa-f]+:[^:]+:[^:]+:[^:]+/g, 'TLS handshake issue')
+          .replace(/:error:/g, ': ');
+        console.info(`[MongoDB] Connection attempt (${strat.name}) status: ${cleanMsg}`);
+      }
+    }
+  }
+
+  if (!fallbackInMemoryDb) {
+    console.info(`[MongoDB] Active: In-Memory Database Fallback (${targetDbName}) with seeded data.`);
+    fallbackInMemoryDb = createInMemoryDatabase();
+  }
+  return fallbackInMemoryDb;
+}
+
+// User filter helper ensuring robust ownership validation across Firebase UID, Email, and Mongo _id
+function buildUserFilter(req: any) {
+  const conditions: any[] = [
+    { userId: req.user.uid },
+    { ownerId: req.user.uid },
+    { createdBy: req.user.uid },
+  ];
+
+  if (req.user.email) {
+    conditions.push(
+      { userEmail: req.user.email },
+      { userId: req.user.email },
+      { ownerId: req.user.email }
+    );
+  }
+
+  if (req.user._id) {
+    conditions.push(
+      { userId: req.user._id.toString() },
+      { ownerId: req.user._id.toString() }
+    );
+  }
+
+  return { $or: conditions };
+}
 
 export async function getApp() {
   if (appPromise) return appPromise;
@@ -135,114 +305,19 @@ export async function getApp() {
     const app = express();
     const isProduction = process.env.NODE_ENV === 'production';
 
-    // --- MongoDB Setup with Multi-Mode Resilient Connection & Fallback ---
-    let mongoClient: MongoClient | null = null;
-    let db: any = null;
-    const targetDbName = process.env.MONGODB_DB_NAME || process.env.MONGODB_DB || 'summons_app';
+    // Initialize initial database connection
+    let db = await getDatabase();
+    let mongoClient = cachedMongoClient;
 
-    if (process.env.MONGODB_URI) {
-      const rawUri = process.env.MONGODB_URI.trim();
-      console.info(`[MongoDB] Attempting connection to database: '${targetDbName}'...`);
-
-      const connectionStrategies = [
-        {
-          name: 'Standard Driver Connection',
-          options: {
-            serverSelectionTimeoutMS: 5000,
-            connectTimeoutMS: 5000,
-          }
-        },
-        {
-          name: 'ServerApi v1 Unified Mode',
-          options: {
-            serverSelectionTimeoutMS: 5000,
-            connectTimeoutMS: 5000,
-            serverApi: {
-              version: ServerApiVersion.v1,
-              strict: false,
-              deprecationErrors: true,
-            }
-          }
-        },
-        {
-          name: 'Direct TLS Compatibility Mode',
-          options: {
-            serverSelectionTimeoutMS: 5000,
-            connectTimeoutMS: 5000,
-            tls: true,
-            tlsAllowInvalidCertificates: true,
-          }
-        }
-      ];
-
-      for (const strat of connectionStrategies) {
-        try {
-          mongoClient = new MongoClient(rawUri, strat.options as any);
-          await mongoClient.connect();
-          db = mongoClient.db(targetDbName);
-          // Ping command to verify round-trip database readiness
-          await db.command({ ping: 1 });
-          console.info(`[MongoDB] Connected successfully to database '${targetDbName}' via ${strat.name}.`);
-          break;
-        } catch (connErr: any) {
-          const rawMsg = connErr?.message || String(connErr);
-          const isAtlasIpRestricted = /SSL alert number 80|tlsv1 alert internal error|ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR/i.test(rawMsg);
-
-          if (mongoClient) {
-            try { await mongoClient.close(); } catch (_) {}
-            mongoClient = null;
-          }
-          db = null;
-
-          if (isAtlasIpRestricted) {
-            console.info(
-              `[MongoDB] Notice: Remote cluster connection closed by MongoDB Atlas (IP Access List restriction - SSL alert 80). ` +
-              `To allow direct connection from all cloud runtimes, add 0.0.0.0/0 to MongoDB Atlas > Network Access. ` +
-              `Seamlessly activating robust local database for '${targetDbName}'.`
-            );
-            // IP restriction cannot be resolved by changing driver options; exit strategy loop immediately
-            break;
-          } else {
-            const cleanMsg = rawMsg
-              .replace(/error:[0-9A-Fa-f]+:[^:]+:[^:]+:[^:]+/g, 'TLS handshake issue')
-              .replace(/:error:/g, ': ');
-            console.info(`[MongoDB] Connection attempt (${strat.name}) status: ${cleanMsg}`);
-          }
-        }
+    // Middleware to ensure fresh db connection on every serverless invocation
+    app.use(async (req: any, _res: any, next: any) => {
+      try {
+        req.db = await getDatabase();
+      } catch (_) {
+        req.db = db;
       }
-
-      if (db) {
-        // Ensure indexes for efficient querying safely without crashing on existing indexes
-        const safeCreateIndex = async (colName: string, spec: any, options: any = {}) => {
-          try {
-            await db.collection(colName).createIndex(spec, options);
-          } catch (indexErr: any) {
-            console.warn(`[MongoDB] Index on ${colName} skipped/exists:`, indexErr.message);
-          }
-        };
-
-        await safeCreateIndex('summons', { userId: 1 });
-        await safeCreateIndex('summons', { userId: 1, createdAt: -1 });
-        await safeCreateIndex('summons', { userId: 1, updatedAt: -1 });
-        await safeCreateIndex('witnesses', { userId: 1 });
-        await safeCreateIndex('users', { email: 1 }, { unique: true, sparse: true });
-        await safeCreateIndex('users', { providerId: 1 }, { sparse: true });
-        await safeCreateIndex('notifications', { userId: 1 });
-        await safeCreateIndex('notifications', { uniqueKey: 1 }, { unique: true, sparse: true });
-        await safeCreateIndex('fcm_tokens', { userId: 1 });
-        await safeCreateIndex('fcm_tokens', { token: 1 }, { unique: true, sparse: true });
-        console.info(`[MongoDB] Collections and indexes verified for '${targetDbName}'.`);
-      }
-    } else {
-      if (isProduction) {
-        console.warn('[MongoDB:WARN] MONGODB_URI environment variable is not defined.');
-      }
-    }
-
-    if (!db) {
-      console.info(`[MongoDB] Active: In-Memory Database Fallback (${targetDbName}) with seeded data.`);
-      db = createInMemoryDatabase();
-    }
+      next();
+    });
 
   // ---------------------
 
@@ -423,7 +498,6 @@ export async function getApp() {
             _id: null,
             email: decodedFirebaseToken.email ? decodedFirebaseToken.email.toLowerCase() : null,
           };
-          return next();
         } catch (firebaseErr: any) {
           console.warn('[Auth] Firebase verifyIdToken note:', firebaseErr?.message || firebaseErr);
           // Token signature fallback for Google/Firebase tokens across provisioned project IDs
@@ -445,21 +519,64 @@ export async function getApp() {
               _id: null,
               email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null,
             };
-            return next();
+          } else {
+            throw firebaseErr;
+          }
+        }
+      } else {
+        // 2. Verify local JWT Session
+        if (!process.env.JWT_SECRET) {
+          throw new Error('JWT_SECRET is missing');
+        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
+        req.user = {
+          uid: decoded.firebaseUid || decoded.userId,
+          _id: decoded.userId,
+          email: decoded.email ? decoded.email.toLowerCase() : null,
+        };
+      }
+
+      // Populate MongoDB user ID and auto-sync user record
+      if (req.user && req.user.uid) {
+        const currentDb = req.db || db;
+        if (currentDb) {
+          try {
+            const userDoc = await currentDb.collection('users').findOne({
+              $or: [
+                { providerId: req.user.uid },
+                ...(req.user.email ? [{ email: req.user.email }] : [])
+              ]
+            });
+            if (userDoc) {
+              req.user._id = userDoc._id.toString();
+              if (!userDoc.providerId) {
+                await currentDb.collection('users').updateOne(
+                  { _id: userDoc._id },
+                  { $set: { providerId: req.user.uid, updatedAt: new Date() } }
+                );
+              }
+            } else {
+              const newUser = {
+                email: req.user.email,
+                displayName: req.user.email ? req.user.email.split('@')[0] : 'Officer',
+                authProvider: 'firebase',
+                providerId: req.user.uid,
+                badgeNumber: '',
+                policeStation: '',
+                district: '',
+                rank: 'Officer',
+                createdAt: new Date(),
+                updatedAt: new Date()
+              };
+              const insertResult = await currentDb.collection('users').insertOne(newUser);
+              req.user._id = insertResult.insertedId.toString();
+            }
+          } catch (lookupErr) {
+            // Non-blocking
           }
         }
       }
 
-      // 2. Verify local JWT Session
-      if (!process.env.JWT_SECRET) {
-        throw new Error('JWT_SECRET is missing');
-      }
-      const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-      req.user = {
-        uid: decoded.firebaseUid || decoded.userId,
-        _id: decoded.userId,
-        email: decoded.email ? decoded.email.toLowerCase() : null,
-      };
       next();
     } catch (error) {
       console.warn('[Auth] Token verification failed for route', req.path);
@@ -775,17 +892,11 @@ export async function getApp() {
 
   // --- Summons Endpoints ---
   app.get('/api/summons', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const userFilter = {
-        $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
-        ]
-      };
-      let summons = await db.collection('summons').find(userFilter).toArray();
+      const userFilter = buildUserFilter(req);
+      let summons = await currentDb.collection('summons').find(userFilter).sort({ updatedAt: -1, createdAt: -1 }).toArray();
       
       // Auto-seed starter summons ONLY for demo officer account
       if (summons.length === 0 && (req.user.uid === 'demo-officer-uid' || req.user.email === 'demo@police.gov.in')) {
@@ -868,14 +979,14 @@ export async function getApp() {
           },
         ];
         try {
-          if (db.collection('summons').insertMany) {
-            await db.collection('summons').insertMany(defaultSummons);
+          if (currentDb.collection('summons').insertMany) {
+            await currentDb.collection('summons').insertMany(defaultSummons);
           } else {
             for (const s of defaultSummons) {
-              await db.collection('summons').insertOne(s);
+              await currentDb.collection('summons').insertOne(s);
             }
           }
-          summons = await db.collection('summons').find(userFilter).toArray();
+          summons = await currentDb.collection('summons').find(userFilter).sort({ updatedAt: -1, createdAt: -1 }).toArray();
         } catch (seedErr) {
           console.warn('[Summons] Auto-seed error:', seedErr);
         }
@@ -888,22 +999,20 @@ export async function getApp() {
   });
 
   app.get('/api/summons/:id', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      const userFilter = {
+      const userFilter = buildUserFilter(req);
+      const idFilter = {
         $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+          { _id: id },
+          { id: id },
+          ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
-      let summon = await db.collection('summons').findOne({
-        $and: [
-          { $or: [{ _id: id }, { id: id }, ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])] },
-          userFilter
-        ]
+      let summon = await currentDb.collection('summons').findOne({
+        $and: [idFilter, userFilter]
       });
       if (!summon) {
         return res.status(404).json({ error: 'Summon record not found' });
@@ -915,20 +1024,21 @@ export async function getApp() {
   });
 
   app.get('/api/summons/:id/download-original', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
-      const userFilter = {
+      const userFilter = buildUserFilter(req);
+      const idFilter = {
         $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
+          { _id: id },
+          { id: id },
+          ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
-      let summon = await db.collection('summons').findOne({ _id: id, ...userFilter });
-      if (!summon && ObjectId.isValid(id)) {
-        summon = await db.collection('summons').findOne({ _id: new ObjectId(id), ...userFilter });
-      }
+      let summon = await currentDb.collection('summons').findOne({
+        $and: [idFilter, userFilter]
+      });
       if (!summon) {
         return res.status(404).json({ error: 'Summon record not found or access denied' });
       }
@@ -963,7 +1073,8 @@ export async function getApp() {
   });
 
   app.post('/api/summons', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const docId = req.body.id || req.body._id || ('sum_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
       const summon = {
@@ -977,11 +1088,13 @@ export async function getApp() {
         updatedAt: req.body.updatedAt || new Date().toISOString()
       };
       
-      await db.collection('summons').updateOne(
+      await currentDb.collection('summons').updateOne(
         { _id: docId },
         { $set: summon },
         { upsert: true }
       );
+
+      console.info(`[MongoDB] Summons '${docId}' saved for user '${req.user.uid}' in database '${currentDb.databaseName || 'summons_app'}'.`);
 
       // Trigger background push check for upcoming/today hearings
       setTimeout(() => {
@@ -991,12 +1104,14 @@ export async function getApp() {
       }, 100);
       res.status(201).json({ ...summon, id: docId });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[MongoDB] Summons save error:', err);
+      res.status(500).json({ error: err.message || 'Failed to persist summon to database' });
     }
   });
 
   app.put('/api/summons/:id', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
       const updates = { ...req.body, updatedAt: new Date().toISOString() };
@@ -1012,16 +1127,9 @@ export async function getApp() {
           ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
-      const userFilter = {
-        $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
-        ]
-      };
+      const userFilter = buildUserFilter(req);
 
-      const result = await db.collection('summons').updateOne(
+      const result = await currentDb.collection('summons').updateOne(
         { $and: [idFilter, userFilter] },
         { $set: updates }
       );
@@ -1032,7 +1140,7 @@ export async function getApp() {
         return res.status(404).json({ error: 'Summon record not found or access denied' });
       }
 
-      const updatedDoc = await db.collection('summons').findOne({ $and: [idFilter, userFilter] });
+      const updatedDoc = await currentDb.collection('summons').findOne({ $and: [idFilter, userFilter] });
 
       // Trigger background push check after updates
       setTimeout(() => {
@@ -1041,18 +1149,20 @@ export async function getApp() {
         );
       }, 100);
 
-      res.json({
+      res.status(200).json({
         success: true,
         updatedCount: result.modifiedCount,
         summon: updatedDoc ? { ...updatedDoc, id: updatedDoc._id?.toString() || updatedDoc.id } : undefined,
       });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[MongoDB] Summons update error:', err);
+      res.status(500).json({ error: err.message || 'Failed to update summon in database' });
     }
   });
 
   app.delete('/api/summons/:id', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
       const idFilter = {
@@ -1062,40 +1172,29 @@ export async function getApp() {
           ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
-      const userFilter = {
-        $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user.email ? [{ userEmail: req.user.email }] : []),
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
-        ]
-      };
+      const userFilter = buildUserFilter(req);
 
-      const result = await db.collection('summons').deleteOne({ $and: [idFilter, userFilter] });
+      const result = await currentDb.collection('summons').deleteOne({ $and: [idFilter, userFilter] });
       if (result.deletedCount === 0) {
         return res.status(404).json({ error: 'Summon record not found or access denied' });
       }
 
-      await db.collection('notifications').deleteMany({ summonsId: id });
+      await currentDb.collection('notifications').deleteMany({ summonsId: id });
       console.info(`[MongoDB] Summons delete '${id}': deleted=${result.deletedCount}`);
-      res.json({ success: true, deletedCount: result.deletedCount });
+      res.status(200).json({ success: true, deletedCount: result.deletedCount });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[MongoDB] Summons delete error:', err);
+      res.status(500).json({ error: err.message || 'Failed to delete summon from database' });
     }
   });
 
   // --- Witnesses Endpoints ---
   app.get('/api/witnesses', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const userFilter = {
-        $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
-        ]
-      };
-      const witnesses = await db.collection('witnesses').find(userFilter).toArray();
+      const userFilter = buildUserFilter(req);
+      const witnesses = await currentDb.collection('witnesses').find(userFilter).sort({ updatedAt: -1, createdAt: -1 }).toArray();
       res.json(witnesses.map((w: any) => ({ ...w, id: w._id?.toString() || w.id })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1103,19 +1202,21 @@ export async function getApp() {
   });
 
   app.post('/api/witnesses', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const docId = req.body.id || req.body._id || ('wit_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
       const witness = {
         ...req.body,
         _id: docId,
+        id: docId,
         userId: req.user.uid,
         ownerId: req.user.uid,
+        userEmail: req.user.email || req.body.userEmail || undefined,
         updatedAt: req.body.updatedAt || new Date().toISOString()
       };
-      delete witness.id;
 
-      await db.collection('witnesses').updateOne(
+      await currentDb.collection('witnesses').updateOne(
         { _id: docId },
         { $set: witness },
         { upsert: true }
@@ -1127,7 +1228,8 @@ export async function getApp() {
   });
 
   app.put('/api/witnesses/:id', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
       const updates = { ...req.body, updatedAt: new Date().toISOString() };
@@ -1142,18 +1244,15 @@ export async function getApp() {
           ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
-      const userFilter = {
-        $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
-        ]
-      };
+      const userFilter = buildUserFilter(req);
 
-      const result = await db.collection('witnesses').updateOne(
+      const result = await currentDb.collection('witnesses').updateOne(
         { $and: [idFilter, userFilter] },
         { $set: updates }
       );
+      if (result.matchedCount === 0) {
+        return res.status(404).json({ error: 'Witness record not found or access denied' });
+      }
       res.json({ success: true, updatedCount: result.modifiedCount });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1161,7 +1260,8 @@ export async function getApp() {
   });
 
   app.delete('/api/witnesses/:id', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
       const idFilter = {
@@ -1170,15 +1270,12 @@ export async function getApp() {
           ...(ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : [])
         ]
       };
-      const userFilter = {
-        $or: [
-          { userId: req.user.uid },
-          { ownerId: req.user.uid },
-          ...(req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : [])
-        ]
-      };
+      const userFilter = buildUserFilter(req);
 
-      const result = await db.collection('witnesses').deleteOne({ $and: [idFilter, userFilter] });
+      const result = await currentDb.collection('witnesses').deleteOne({ $and: [idFilter, userFilter] });
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ error: 'Witness record not found or access denied' });
+      }
       res.json({ success: true, deletedCount: result.deletedCount });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1187,9 +1284,10 @@ export async function getApp() {
 
   // --- Officer App Reviews Endpoints ---
   app.get('/api/reviews', async (_req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = _req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const reviews = await db.collection('reviews').find({}).sort({ updatedAt: -1, createdAt: -1 }).limit(50).toArray();
+      const reviews = await currentDb.collection('reviews').find({}).sort({ updatedAt: -1, createdAt: -1 }).limit(50).toArray();
       res.json(reviews.map((r: any) => ({
         ...r,
         id: r._id?.toString() || r.id,
@@ -1201,17 +1299,26 @@ export async function getApp() {
   });
 
   app.get('/api/reviews/mine', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const review = await db.collection('reviews').findOne({ userId: req.user.uid });
-      res.json({ review: review || null });
+      const userFilter = {
+        $or: [
+          { userId: req.user.uid },
+          ...(req.user.email ? [{ userId: req.user.email }, { userEmail: req.user.email }] : []),
+          ...(req.user._id ? [{ userId: req.user._id.toString() }] : [])
+        ]
+      };
+      const review = await currentDb.collection('reviews').findOne(userFilter);
+      res.json({ review: review ? { ...review, id: review._id?.toString() || review.id } : null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post('/api/reviews', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { rating, feedback, officerName, badgeNumber, rank } = req.body;
       const numRating = Number(rating);
@@ -1226,16 +1333,17 @@ export async function getApp() {
 
       const reviewData = {
         userId: req.user.uid,
+        userEmail: req.user.email || undefined,
         rating: Math.round(numRating),
         feedback: feedback.trim(),
-        officerName: officerName || '',
-        badgeNumber: badgeNumber || '',
-        rank: rank || '',
+        officerName: (officerName || '').trim(),
+        badgeNumber: (badgeNumber || '').trim(),
+        rank: (rank || '').trim(),
         appVersion: '1.0.0',
         updatedAt: new Date(),
       };
 
-      await db.collection('reviews').updateOne(
+      const result = await currentDb.collection('reviews').updateOne(
         { userId: req.user.uid },
         {
           $set: reviewData,
@@ -1244,11 +1352,11 @@ export async function getApp() {
         { upsert: true }
       );
 
-      console.info(`[App Review] Officer ${req.user.uid} submitted ${numRating}-star app review`);
-      res.status(200).json({ success: true, message: 'Review saved successfully!', review: reviewData });
+      console.info(`[App Review] Officer ${req.user.uid} saved ${numRating}-star review in database (upserted=${result.upsertedCount}, modified=${result.modifiedCount})`);
+      res.status(200).json({ success: true, message: 'Review saved successfully to database!', review: reviewData });
     } catch (err: any) {
       console.error('[App Review] Failed to save review:', err);
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message || 'Failed to save review to database' });
     }
   });
 
