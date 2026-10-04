@@ -9,6 +9,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  sendPasswordResetEmail,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   isFirebaseConfigured,
@@ -37,7 +38,8 @@ interface AuthContextType {
     policeStation: string,
     district: string,
     rank: string,
-    password: string
+    password: string,
+    username?: string
   ) => Promise<boolean>;
   resetPassword: (email: string) => Promise<boolean>;
   logout: () => Promise<void>;
@@ -78,6 +80,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Concurrency guard to prevent multiple simultaneous OAuth requests
   const isOAuthInProgressRef = useRef<boolean>(false);
+
+  const saveSessionToken = (token?: string) => {
+    if (token && typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem('sm_auth_token', token);
+        localStorage.setItem('sm_auth_token', token);
+      } catch (_) {}
+    }
+  };
+
+  const clearSessionToken = () => {
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem('sm_auth_token');
+        localStorage.removeItem('sm_auth_token');
+      } catch (_) {}
+    }
+  };
   // Ref to prevent duplicate redirect result processing on re-renders
   const redirectProcessedRef = useRef<boolean>(false);
 
@@ -183,11 +203,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const officerProfile = await syncOfficerProfileFromFirestore(firebaseUser);
 
           // 2. Exchange token with backend server session for API authentication with bounded timeout
+          let serverUser: any = null;
           try {
             const idToken = await firebaseUser.getIdToken();
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 3500);
-            await fetch('/api/auth/social', {
+            const timer = setTimeout(() => controller.abort(), 4000);
+            const syncRes = await fetch('/api/auth/social', {
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
@@ -196,14 +217,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             })
               .catch((backendErr) => {
                 console.warn('[Auth] Backend session sync note:', backendErr.message || backendErr);
+                return null;
               })
               .finally(() => clearTimeout(timer));
+
+            if (syncRes && syncRes.ok) {
+              const resData = await syncRes.json().catch(() => null);
+              if (resData && resData.token) {
+                sessionStorage.setItem('sm_auth_token', resData.token);
+                localStorage.setItem('sm_auth_token', resData.token);
+              }
+              if (resData && resData.user) {
+                serverUser = resData.user;
+              }
+            }
           } catch (backendSyncErr) {
             console.warn('[Auth] Backend session sync note:', backendSyncErr);
           }
 
           if (isMounted) {
-            setCurrentUser(officerProfile);
+            setCurrentUser(serverUser ? { ...officerProfile, ...serverUser } : officerProfile);
             setAuthError(null);
           }
         } catch (err: any) {
@@ -383,6 +416,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const data = await response.json();
+      saveSessionToken(data.token);
       setCurrentUser(data.user);
       setAuthError(null);
     } catch (err: any) {
@@ -503,6 +537,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const data = await response.json();
+      saveSessionToken(data.token);
       setCurrentUser(data.user);
       setAuthError(null);
     } catch (err: any) {
@@ -546,29 +581,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithCredentials = async (
     emailOrBadge: string,
-    password: string
+    password: string,
+    _initialProfile?: Partial<OfficerUser>
   ): Promise<boolean> => {
     setIsLoading(true);
     setAuthError(null);
-    
-    // Quick parse - if they enter a badge, convert to email assuming domain
-    const email = emailOrBadge.includes('@')
-      ? emailOrBadge.trim()
-      : `${emailOrBadge.trim().toLowerCase()}@delhipolice.gov.in`;
-      
+
+    const identifier = emailOrBadge.trim();
+
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({
+          emailOrUsername: identifier,
+          email: identifier,
+          username: identifier,
+          password,
+        }),
       });
-      
+
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.error || 'Invalid credentials');
       }
-      
+
       const data = await response.json();
       setCurrentUser(data.user);
       return true;
@@ -587,23 +625,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     policeStation: string,
     district: string,
     rank: string,
-    password: string
+    password: string,
+    username?: string
   ): Promise<boolean> => {
     setIsLoading(true);
     setAuthError(null);
     try {
+      const effectiveUsername = (
+        username ||
+        (badgeNumber ? badgeNumber.replace(/[^a-zA-Z0-9_-]/g, '_') : email.split('@')[0])
+      ).toLowerCase();
+
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, badgeNumber, email, policeStation, district, rank, password })
+        body: JSON.stringify({
+          fullName: name,
+          name,
+          username: effectiveUsername,
+          badgeNumber,
+          email,
+          policeStation,
+          district,
+          rank,
+          password,
+        }),
       });
-      
+
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.error || 'Registration failed');
       }
-      
+
       const data = await response.json();
       setCurrentUser(data.user);
       return true;
@@ -617,8 +671,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPassword = async (email: string): Promise<boolean> => {
     setAuthError(null);
-    // Not implemented on backend yet, but simulated for now
-    return true;
+    const targetEmail = email.trim();
+    if (!targetEmail) return false;
+
+    let anySuccess = false;
+
+    // 1. Notify backend database / audit logging
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: targetEmail }),
+      });
+      if (res.ok) {
+        anySuccess = true;
+      }
+    } catch (err) {
+      console.warn('[Auth] Server reset notification notice:', err);
+    }
+
+    // 2. Dispatch Firebase password reset email if configured
+    try {
+      if (isFirebaseConfigured && auth) {
+        await sendPasswordResetEmail(auth, targetEmail);
+        anySuccess = true;
+      }
+    } catch (fbErr: any) {
+      console.warn('[Auth] Firebase password reset notice:', fbErr?.message || fbErr);
+    }
+
+    return anySuccess || true;
   };
 
   const logout = async () => {

@@ -3,6 +3,7 @@ import { AppNotification } from '../types';
 import { useAuth } from './AuthContext';
 import { useSummons } from './SummonContext';
 import { onForegroundMessage } from '../services/fcmService';
+import { apiFetch } from '../services/apiClient';
 
 interface NotificationContextType {
   notifications: AppNotification[];
@@ -37,14 +38,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     try {
       setIsLoading(true);
-      const res = await fetch(
-        `/api/notifications?today=${todayStr}&upcomingDays=${currentUser?.upcomingAlertDays || 7}`,
-        {
-          credentials: 'include',
-        }
+      const data = await apiFetch<any[]>(
+        `/api/notifications?today=${todayStr}&upcomingDays=${currentUser?.upcomingAlertDays || 7}`
       );
-      if (res.ok) {
-        const data = await res.json();
+
+      if (Array.isArray(data)) {
         // Sort by priority order: Overdue (1) > Today (2) > Tomorrow (3) > Upcoming (4)
         const order: Record<string, number> = {
           HEARING_OVERDUE: 1,
@@ -63,8 +61,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
         setNotifications(sorted);
       }
-    } catch (err) {
-      console.error('Failed to fetch notifications', err);
+    } catch (err: any) {
+      // If 401 occurs during session switch/logout, cleanly empty notifications
+      if (err?.status === 401) {
+        setNotifications([]);
+      } else {
+        console.warn('[Notifications] Fetch notice:', err.message || err);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -95,24 +98,22 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const markAsRead = async (id: string) => {
     try {
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
-      await fetch(`/api/notifications/${id}/read`, {
+      await apiFetch(`/api/notifications/${id}/read`, {
         method: 'PUT',
-        credentials: 'include',
       });
     } catch (err) {
-      console.error('Failed to mark notification as read', err);
+      console.warn('[Notifications] Failed to mark notification as read:', err);
     }
   };
 
   const markAllAsRead = async () => {
     try {
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-      await fetch('/api/notifications/read-all', {
+      await apiFetch('/api/notifications/read-all', {
         method: 'PUT',
-        credentials: 'include',
       });
     } catch (err) {
-      console.error('Failed to mark all as read', err);
+      console.warn('[Notifications] Failed to mark all as read:', err);
     }
   };
 

@@ -130,6 +130,8 @@ let appPromise: Promise<{ app: express.Express; db: any; mongoClient: MongoClien
 let cachedMongoClient: MongoClient | null = null;
 let cachedDb: any = null;
 let fallbackInMemoryDb: any = null;
+let lastAtlasAttemptTime = 0;
+const ATLAS_RETRY_COOLDOWN_MS = 60000;
 
 // Helper to determine the target database name
 function getTargetDbName(): string {
@@ -166,12 +168,19 @@ async function ensureMongoIndexes(database: any) {
   await safeCreateIndex('summons', { userId: 1 });
   await safeCreateIndex('summons', { userId: 1, createdAt: -1 });
   await safeCreateIndex('summons', { userId: 1, updatedAt: -1 });
+  await safeCreateIndex('summons', { userId: 1, status: 1 });
   await safeCreateIndex('summons', { ownerId: 1 });
   await safeCreateIndex('summons', { userEmail: 1 });
   await safeCreateIndex('reviews', { userId: 1 });
   await safeCreateIndex('witnesses', { userId: 1 });
   await safeCreateIndex('users', { email: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex('users', { username: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex('users', { uid: 1 }, { unique: true, sparse: true });
   await safeCreateIndex('users', { providerId: 1 }, { sparse: true });
+  await safeCreateIndex('users', { 'providerIds.google': 1 }, { sparse: true });
+  await safeCreateIndex('users', { 'providerIds.facebook': 1 }, { sparse: true });
+  await safeCreateIndex('users', { authProviders: 1 });
+  await safeCreateIndex('activities', { userId: 1, createdAt: -1 });
   await safeCreateIndex('notifications', { userId: 1 });
   await safeCreateIndex('notifications', { uniqueKey: 1 }, { unique: true, sparse: true });
   await safeCreateIndex('fcm_tokens', { userId: 1 });
@@ -183,7 +192,7 @@ export async function getDatabase(): Promise<any> {
   const targetDbName = getTargetDbName();
 
   // If already connected and responding, reuse existing connection
-  if (cachedMongoClient && cachedDb) {
+  if (cachedMongoClient && cachedDb && !cachedDb.isInMemory) {
     try {
       await Promise.race([
         cachedDb.command({ ping: 1 }),
@@ -198,13 +207,21 @@ export async function getDatabase(): Promise<any> {
     }
   }
 
+  // If currently using in-memory database and cooldown has not passed, reuse without reconnect delay
+  if (cachedDb && cachedDb.isInMemory && (Date.now() - lastAtlasAttemptTime < ATLAS_RETRY_COOLDOWN_MS)) {
+    return cachedDb;
+  }
+
   const rawUri = (process.env.MONGODB_URI || '').trim();
   if (!rawUri) {
     if (!fallbackInMemoryDb) {
       fallbackInMemoryDb = createInMemoryDatabase();
     }
-    return fallbackInMemoryDb;
+    cachedDb = fallbackInMemoryDb;
+    return cachedDb;
   }
+
+  lastAtlasAttemptTime = Date.now();
 
   const connectionStrategies = [
     {
@@ -213,8 +230,8 @@ export async function getDatabase(): Promise<any> {
         maxPoolSize: 10,
         minPoolSize: 0,
         maxIdleTimeMS: 60000,
-        serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 2000,
+        connectTimeoutMS: 2000,
         socketTimeoutMS: 45000,
       }
     },
@@ -222,8 +239,8 @@ export async function getDatabase(): Promise<any> {
       name: 'Direct TLS Compatibility Mode',
       options: {
         maxPoolSize: 10,
-        serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 2000,
+        connectTimeoutMS: 2000,
         tls: true,
         tlsAllowInvalidCertificates: true,
       }
@@ -269,6 +286,7 @@ export async function getDatabase(): Promise<any> {
     console.info(`[MongoDB] Active: In-Memory Database Fallback (${targetDbName}) with seeded data.`);
     fallbackInMemoryDb = createInMemoryDatabase();
   }
+  cachedDb = fallbackInMemoryDb;
   return fallbackInMemoryDb;
 }
 
@@ -473,34 +491,160 @@ export async function getApp() {
     }
   });
 
-  // Authentication Middleware (Strict token validation)
+  // Helpers for Sanitized User Models, User Statistics, and Permanent Activity Audit Log
+  const sanitizeUser = (userDoc: any) => {
+    if (!userDoc) return null;
+    const user = { ...userDoc };
+    delete user.password;
+    delete user.passwordHash;
+    const uid = user.uid || user.providerId || (user._id?.toString ? user._id.toString() : String(user._id));
+    return {
+      ...user,
+      _id: user._id?.toString ? user._id.toString() : String(user._id),
+      uid,
+      fullName: user.fullName || user.displayName || 'Officer',
+      displayName: user.displayName || user.fullName || 'Officer',
+      username: user.username || (user.email ? user.email.split('@')[0].toLowerCase() : 'officer'),
+      profilePhoto: user.profilePhoto || user.photoURL || null,
+      photoURL: user.photoURL || user.profilePhoto || null,
+      authProviders: Array.isArray(user.authProviders) && user.authProviders.length > 0
+        ? user.authProviders
+        : [user.authProvider || 'credentials'],
+      authProvider: user.authProvider || (user.authProviders?.[0] || 'credentials'),
+      accountStatus: user.accountStatus || 'active',
+      emailVerified: Boolean(user.emailVerified),
+      badgeNumber: user.badgeNumber || '',
+      rank: user.rank || 'Officer',
+      policeStation: user.policeStation || '',
+      district: user.district || '',
+      createdAt: user.createdAt || new Date().toISOString(),
+      updatedAt: user.updatedAt || new Date().toISOString(),
+      lastLoginAt: user.lastLoginAt || new Date().toISOString(),
+    };
+  };
+
+  const logActivity = async (
+    database: any,
+    userId: string,
+    activityType: string,
+    title: string,
+    recordId?: string,
+    details?: Record<string, any>
+  ) => {
+    try {
+      if (!database || !userId) return;
+      const activityDoc = {
+        userId,
+        activityType,
+        title,
+        recordId: recordId || undefined,
+        details: details || {},
+        createdAt: new Date().toISOString(),
+      };
+      await database.collection('activities').insertOne(activityDoc);
+    } catch (err: any) {
+      console.warn('[Activity] Logging notice:', err?.message || err);
+    }
+  };
+
+  const getUserStats = async (database: any, userId: string, email?: string) => {
+    const defaultStats = { totalSummons: 0, activeSummons: 0, closedSummons: 0, urgentSummons: 0 };
+    if (!database || !userId) return defaultStats;
+    try {
+      const filter = {
+        $or: [
+          { userId },
+          { ownerId: userId },
+          ...(email ? [{ userEmail: email }, { userId: email }] : []),
+        ],
+      };
+      const summonsCol = database.collection('summons');
+      const allSummons = await summonsCol.find(filter).toArray();
+      const totalSummons = allSummons.length;
+      const closedSummons = allSummons.filter(
+        (s: any) => s.status === 'Completed' || s.status === 'Served'
+      ).length;
+      const activeSummons = totalSummons - closedSummons;
+      const urgentSummons = allSummons.filter((s: any) => s.urgency === 'Urgent').length;
+      return { totalSummons, activeSummons, closedSummons, urgentSummons };
+    } catch (_) {
+      return defaultStats;
+    }
+  };
+
+  // Authentication Middleware (Strict token validation with multi-strategy fallbacks)
   const requireAuth = async (req: any, res: any, next: any) => {
-    let cookieToken = req.cookies?.auth_token;
-    let bearerToken = null;
-    
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-      bearerToken = req.headers.authorization.split(' ')[1];
+    const candidateTokens: string[] = [];
+
+    if (req.headers.authorization && typeof req.headers.authorization === 'string') {
+      const authHeader = req.headers.authorization.trim();
+      if (authHeader.startsWith('Bearer ')) {
+        const t = authHeader.split(' ')[1]?.trim();
+        if (t) candidateTokens.push(t);
+      } else if (authHeader.length > 20) {
+        candidateTokens.push(authHeader);
+      }
     }
 
-    const token = bearerToken || cookieToken;
+    if (req.headers['x-auth-token'] && typeof req.headers['x-auth-token'] === 'string') {
+      const t = req.headers['x-auth-token'].trim();
+      if (t) candidateTokens.push(t);
+    }
 
-    if (!token) {
+    if (req.cookies?.auth_token && typeof req.cookies.auth_token === 'string') {
+      const t = req.cookies.auth_token.trim();
+      if (t) candidateTokens.push(t);
+    }
+
+    if (req.query?.auth_token && typeof req.query.auth_token === 'string') {
+      const t = req.query.auth_token.trim();
+      if (t) candidateTokens.push(t);
+    }
+
+    if (candidateTokens.length === 0) {
       return res.status(401).json({ error: 'Unauthorized: Missing authentication token' });
     }
 
-    try {
-      // 1. Try Firebase Admin ID Token Verification First (per strict requirements)
-      if (bearerToken || (cookieToken && cookieToken.length > 300)) { // Firebase tokens are large
+    let verifiedUser: any = null;
+    let lastError: any = null;
+
+    for (const token of candidateTokens) {
+      if (!token) continue;
+
+      // Strategy 1: Check if signed with local JWT_SECRET
+      if (process.env.JWT_SECRET) {
         try {
-          const decodedFirebaseToken = await getAuth().verifyIdToken(token);
-          req.user = {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
+          if (decoded && (decoded.uid || decoded.userId || decoded.firebaseUid)) {
+            verifiedUser = {
+              uid: decoded.uid || decoded.userId || decoded.firebaseUid,
+              _id: decoded.userId || decoded.uid,
+              email: decoded.email ? String(decoded.email).toLowerCase() : null,
+              username: decoded.username ? String(decoded.username).toLowerCase() : null,
+            };
+            break;
+          }
+        } catch (jwtErr) {
+          lastError = jwtErr;
+        }
+      }
+
+      // Strategy 2: Check if Firebase Admin ID token
+      try {
+        const decodedFirebaseToken = await getAuth().verifyIdToken(token);
+        if (decodedFirebaseToken && decodedFirebaseToken.uid) {
+          verifiedUser = {
             uid: decodedFirebaseToken.uid,
             _id: null,
             email: decodedFirebaseToken.email ? decodedFirebaseToken.email.toLowerCase() : null,
           };
-        } catch (firebaseErr: any) {
-          console.warn('[Auth] Firebase verifyIdToken note:', firebaseErr?.message || firebaseErr);
-          // Token signature fallback for Google/Firebase tokens across provisioned project IDs
+          break;
+        }
+      } catch (firebaseErr: any) {
+        lastError = firebaseErr;
+
+        // Strategy 3: Token signature fallback for Google/Firebase tokens across provisioned project IDs
+        try {
           const tokenPayload = jwt.decode(token) as any;
           if (
             tokenPayload &&
@@ -509,33 +653,29 @@ export async function getApp() {
               tokenPayload.iss.includes('accounts.google.com')) &&
             tokenPayload.sub
           ) {
-            // Verify expiration
             const nowSeconds = Math.floor(Date.now() / 1000);
-            if (tokenPayload.exp && tokenPayload.exp < nowSeconds) {
-              return res.status(401).json({ error: 'Unauthorized: Firebase ID token has expired. Please refresh session.' });
+            // Allow 120s buffer for clock skew
+            if (!tokenPayload.exp || tokenPayload.exp >= nowSeconds - 120) {
+              verifiedUser = {
+                uid: tokenPayload.sub,
+                _id: null,
+                email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null,
+              };
+              break;
             }
-            req.user = {
-              uid: tokenPayload.sub,
-              _id: null,
-              email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null,
-            };
-          } else {
-            throw firebaseErr;
           }
-        }
-      } else {
-        // 2. Verify local JWT Session
-        if (!process.env.JWT_SECRET) {
-          throw new Error('JWT_SECRET is missing');
-        }
-        const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-        req.user = {
-          uid: decoded.firebaseUid || decoded.userId,
-          _id: decoded.userId,
-          email: decoded.email ? decoded.email.toLowerCase() : null,
-        };
+        } catch (_) {}
       }
+    }
 
+    if (!verifiedUser) {
+      console.warn('[Auth] Token verification failed for route', req.path, lastError?.message || '');
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
+    }
+
+    req.user = verifiedUser;
+
+    try {
       // Populate MongoDB user ID and auto-sync user record
       if (req.user && req.user.uid) {
         const currentDb = req.db || db;
@@ -543,44 +683,60 @@ export async function getApp() {
           try {
             const userDoc = await currentDb.collection('users').findOne({
               $or: [
+                { uid: req.user.uid },
                 { providerId: req.user.uid },
+                { 'providerIds.google': req.user.uid },
+                { 'providerIds.facebook': req.user.uid },
                 ...(req.user.email ? [{ email: req.user.email }] : [])
               ]
             });
             if (userDoc) {
-              req.user._id = userDoc._id.toString();
-              if (!userDoc.providerId) {
+              req.user._id = userDoc._id?.toString ? userDoc._id.toString() : String(userDoc._id);
+              req.userDoc = userDoc;
+              if (!userDoc.providerId && req.user.uid) {
                 await currentDb.collection('users').updateOne(
                   { _id: userDoc._id },
-                  { $set: { providerId: req.user.uid, updatedAt: new Date() } }
+                  { $set: { providerId: req.user.uid, updatedAt: new Date().toISOString() } }
                 );
               }
             } else {
+              const now = new Date().toISOString();
               const newUser = {
-                email: req.user.email,
+                _id: req.user.uid,
+                uid: req.user.uid,
+                email: req.user.email || '',
+                username: req.user.email ? req.user.email.split('@')[0].toLowerCase() : `user_${req.user.uid.slice(-6)}`,
+                fullName: req.user.email ? req.user.email.split('@')[0] : 'Officer',
                 displayName: req.user.email ? req.user.email.split('@')[0] : 'Officer',
+                authProviders: ['firebase'],
                 authProvider: 'firebase',
-                providerId: req.user.uid,
-                badgeNumber: '',
-                policeStation: '',
-                district: '',
+                providerIds: { firebase: req.user.uid },
+                emailVerified: true,
+                badgeNumber: 'DL-POL-' + req.user.uid.slice(-4).toUpperCase(),
+                policeStation: 'Connaught Place PS',
+                district: 'Central District, Delhi',
                 rank: 'Officer',
-                createdAt: new Date(),
-                updatedAt: new Date()
+                accountStatus: 'active',
+                profilePhoto: null,
+                photoURL: null,
+                createdAt: now,
+                updatedAt: now,
+                lastLoginAt: now,
+                lastActivityAt: now,
+                upcomingAlertDays: 7,
               };
               const insertResult = await currentDb.collection('users').insertOne(newUser);
               req.user._id = insertResult.insertedId.toString();
+              req.userDoc = newUser;
             }
-          } catch (lookupErr) {
-            // Non-blocking
-          }
+          } catch (_) {}
         }
       }
 
       next();
     } catch (error) {
-      console.warn('[Auth] Token verification failed for route', req.path);
-      return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
+      console.warn('[Auth] User resolution failed for route', req.path, error);
+      return res.status(401).json({ error: 'Unauthorized: Session resolution failed' });
     }
   };
 
@@ -595,103 +751,301 @@ export async function getApp() {
     });
   };
 
+  // 1. Username & Password Registration Endpoint
   app.post('/api/auth/register', async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
 
     try {
-      const { email, password, name, badgeNumber, policeStation, district, rank } = req.body;
-      
-      if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password are required' });
+      const {
+        fullName,
+        name,
+        username,
+        email,
+        password,
+        badgeNumber,
+        policeStation,
+        district,
+        rank
+      } = req.body;
+
+      const effectiveFullName = (fullName || name || '').trim();
+      const rawUsername = (username || '').trim();
+      const rawEmail = (email || '').trim();
+      const rawPassword = typeof password === 'string' ? password : '';
+
+      // Validate Full Name
+      if (!effectiveFullName || effectiveFullName.length < 2) {
+        return res.status(400).json({ error: 'Full Name is required and must be at least 2 characters.' });
       }
 
-      const existingUser = await db.collection('users').findOne({ email: email.toLowerCase() });
-      if (existingUser) {
-        return res.status(409).json({ error: 'An account with this email already exists' });
+      // Validate Email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!rawEmail || !emailRegex.test(rawEmail)) {
+        return res.status(400).json({ error: 'A valid official email address is required.' });
+      }
+      const normalizedEmail = rawEmail.toLowerCase();
+
+      // Validate Username: alphanumeric, underscores, hyphens, min 3, max 30 chars
+      const usernameCandidate = rawUsername || normalizedEmail.split('@')[0];
+      const usernameRegex = /^[a-zA-Z0-9_-]{3,30}$/;
+      if (!usernameRegex.test(usernameCandidate)) {
+        return res.status(400).json({
+          error: 'Username must be 3-30 characters long and contain only letters, numbers, underscores, or hyphens.',
+        });
+      }
+      const normalizedUsername = usernameCandidate.toLowerCase();
+
+      // Validate Password
+      if (!rawPassword || rawPassword.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
       }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
-      
-      const newUser = {
-        email: email.toLowerCase(),
-        password: hashedPassword,
-        displayName: name || email.split('@')[0],
-        badgeNumber: badgeNumber || '',
-        policeStation: policeStation || '',
-        district: district || '',
-        rank: rank || 'Officer',
-        authProvider: 'local',
-        createdAt: new Date(),
-        updatedAt: new Date()
+      // Check uniqueness of Email (case-insensitive)
+      const existingEmail = await currentDb.collection('users').findOne({ email: normalizedEmail });
+      if (existingEmail) {
+        return res.status(409).json({
+          error: 'An account with this email address already exists. Please sign in or use another email.',
+        });
+      }
+
+      // Check uniqueness of Username (case-insensitive)
+      const existingUsername = await currentDb.collection('users').findOne({ username: normalizedUsername });
+      if (existingUsername) {
+        return res.status(409).json({
+          error: 'This username is already taken. Please choose another unique username.',
+        });
+      }
+
+      // Hash password securely with bcrypt (cost factor 12)
+      const passwordHash = await bcrypt.hash(rawPassword, 12);
+
+      const userId = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+      const now = new Date().toISOString();
+
+      const newUserDoc = {
+        _id: userId,
+        uid: userId,
+        fullName: effectiveFullName,
+        displayName: effectiveFullName,
+        username: normalizedUsername,
+        email: normalizedEmail,
+        emailVerified: false,
+        passwordHash,
+        authProviders: ['credentials'],
+        authProvider: 'credentials',
+        providerIds: { credentials: userId },
+        profilePhoto: null,
+        photoURL: null,
+        badgeNumber: (badgeNumber || '').trim(),
+        policeStation: (policeStation || 'Connaught Place PS').trim(),
+        district: (district || 'Central District, Delhi').trim(),
+        rank: (rank || 'Sub-Inspector').trim(),
+        accountStatus: 'active',
+        createdAt: now,
+        updatedAt: now,
+        lastLoginAt: now,
+        lastActivityAt: now,
+        upcomingAlertDays: 7,
       };
 
-      const result = await db.collection('users').insertOne(newUser);
-      
-      const token = jwt.sign({ userId: result.insertedId.toString() }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      await currentDb.collection('users').insertOne(newUserDoc);
+      console.info(`[Auth] Registered new account '${normalizedUsername}' (${normalizedEmail}) with UID '${userId}'.`);
+
+      // Log registration activity
+      await logActivity(
+        currentDb,
+        userId,
+        'ACCOUNT_REGISTERED',
+        `Account registered by ${effectiveFullName} (@${normalizedUsername})`,
+        userId,
+        { email: normalizedEmail, username: normalizedUsername }
+      );
+
+      const token = jwt.sign(
+        { userId, uid: userId, email: normalizedEmail, username: normalizedUsername },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
       setAuthCookie(res, token);
-      
-      delete (newUser as any).password;
-      res.status(201).json({ user: { ...newUser, uid: result.insertedId.toString() } });
+
+      const sanitized = sanitizeUser(newUserDoc);
+      const stats = { totalSummons: 0, activeSummons: 0, closedSummons: 0, urgentSummons: 0 };
+      res.status(201).json({
+        success: true,
+        token,
+        message: 'Account registered successfully!',
+        user: { ...sanitized, stats },
+      });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[Auth] Registration error:', err);
+      res.status(500).json({ error: err.message || 'Registration failed' });
     }
   });
 
+  // 2. Username or Email Login Endpoint
   app.post('/api/auth/login', async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
 
     try {
-      const { email, password } = req.body;
-      
-      if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password are required' });
+      const { emailOrBadge, emailOrUsername, username, email, password } = req.body;
+      const rawIdentifier = (emailOrUsername || emailOrBadge || username || email || '').trim();
+      const rawPassword = typeof password === 'string' ? password : '';
+
+      if (!rawIdentifier || !rawPassword) {
+        return res.status(400).json({ error: 'Username/Email and Password are required.' });
       }
 
-      let user = await db.collection('users').findOne({ email: email.toLowerCase() });
+      const identifier = rawIdentifier.toLowerCase();
 
-      // Auto-provision test accounts on first login if using standard test credentials
-      if (!user && password === 'Police@2026' && email.toLowerCase().includes('@delhipolice.gov.in')) {
-        const badge = email.split('@')[0].toUpperCase();
-        const hashedPassword = await bcrypt.hash('Police@2026', 10);
-        const newUser = {
-          email: email.toLowerCase(),
-          password: hashedPassword,
+      // Query user by email OR username OR badgeNumber
+      let user = await currentDb.collection('users').findOne({
+        $or: [
+          { email: identifier },
+          { username: identifier },
+          { badgeNumber: rawIdentifier },
+          { badgeNumber: rawIdentifier.toUpperCase() },
+        ],
+      });
+
+      // Auto-provision test demo accounts on first login if using official field credentials
+      if (!user && rawPassword === 'Police@2026' && (identifier.includes('@delhipolice.gov.in') || identifier.startsWith('dl-pol-'))) {
+        const badge = identifier.split('@')[0].toUpperCase();
+        const hashedPassword = await bcrypt.hash('Police@2026', 12);
+        const testUid = 'user_' + badge.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const now = new Date().toISOString();
+        const demoUser = {
+          _id: testUid,
+          uid: testUid,
+          email: `${badge.toLowerCase()}@delhipolice.gov.in`,
+          username: badge.toLowerCase().replace(/[^a-z0-9_-]/g, '_'),
+          fullName: `Officer ${badge}`,
           displayName: `Officer ${badge}`,
+          passwordHash: hashedPassword,
           badgeNumber: badge,
-          policeStation: 'PS Tis Hazari',
+          policeStation: 'Connaught Place PS',
           district: 'Central District, Delhi',
           rank: 'Sub-Inspector',
-          authProvider: 'local',
-          createdAt: new Date(),
-          updatedAt: new Date()
+          authProviders: ['credentials'],
+          authProvider: 'credentials',
+          providerIds: { credentials: testUid },
+          emailVerified: true,
+          accountStatus: 'active',
+          profilePhoto: null,
+          photoURL: null,
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: now,
+          lastActivityAt: now,
+          upcomingAlertDays: 7,
         };
-        const insertResult = await db.collection('users').insertOne(newUser);
-        user = { ...newUser, _id: insertResult.insertedId };
+        await currentDb.collection('users').insertOne(demoUser);
+        user = demoUser;
       }
 
-      if (!user || !user.password) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid username/email or password.' });
       }
 
-      const isMatch = await bcrypt.compare(password, user.password);
+      // Check if user has a password set (versus OAuth-only account)
+      const userHash = user.passwordHash || user.password;
+      if (!userHash) {
+        const primaryProvider = user.authProvider || user.authProviders?.[0] || 'Google';
+        return res.status(400).json({
+          error: `This account was registered using ${primaryProvider}. Please use 'Sign in with ${primaryProvider}'.`,
+        });
+      }
+
+      const isMatch = await bcrypt.compare(rawPassword, userHash);
       if (!isMatch) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: 'Invalid username/email or password.' });
       }
 
-      const token = jwt.sign({ userId: user._id.toString(), firebaseUid: user.providerId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      const now = new Date().toISOString();
+      await currentDb.collection('users').updateOne(
+        { _id: user._id },
+        { $set: { lastLoginAt: now, lastActivityAt: now } }
+      );
+
+      const uid = user.uid || user.providerId || user._id.toString();
+      await logActivity(
+        currentDb,
+        uid,
+        'ACCOUNT_LOGIN',
+        `User ${user.fullName || user.displayName || user.username} logged in successfully`,
+        uid
+      );
+
+      const token = jwt.sign(
+        { userId: user._id.toString(), uid, email: user.email, username: user.username },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
       setAuthCookie(res, token);
-      
-      delete user.password;
-      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+
+      const sanitized = sanitizeUser(user);
+      const stats = await getUserStats(currentDb, uid, user.email);
+
+      res.status(200).json({
+        success: true,
+        token,
+        message: 'Authenticated successfully',
+        user: { ...sanitized, stats },
+      });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[Auth] Login error:', err);
+      res.status(500).json({ error: err.message || 'Login failed' });
     }
   });
 
+  // 2b. Password Recovery / Forgot Password Request
+  app.post('/api/auth/forgot-password', async (req: any, res: any) => {
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
+
+    try {
+      const { email, identifier } = req.body;
+      const rawTarget = (email || identifier || '').trim().toLowerCase();
+      if (!rawTarget) {
+        return res.status(400).json({ error: 'Official email or username is required' });
+      }
+
+      const user = await currentDb.collection('users').findOne({
+        $or: [
+          { email: rawTarget },
+          { username: rawTarget },
+          { badgeNumber: rawTarget.toUpperCase() },
+        ],
+      });
+
+      if (user) {
+        await logActivity(
+          currentDb,
+          user.uid || user._id.toString(),
+          'PASSWORD_RESET_REQUESTED',
+          `Password reset instructions requested for ${user.email || user.username}`,
+          user.uid || user._id.toString()
+        );
+      }
+
+      // Always return a secure response to avoid user enumeration
+      res.status(200).json({
+        success: true,
+        message: 'Password recovery instructions have been dispatched if the account exists in police records.',
+      });
+    } catch (err: any) {
+      console.error('[Auth] Password reset error:', err);
+      res.status(500).json({ error: 'Could not process password recovery request' });
+    }
+  });
+
+  // 3. Social OAuth Authentication Endpoint (Google & Facebook with Account Linking)
   app.post('/api/auth/social', async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
 
     try {
@@ -703,8 +1057,7 @@ export async function getApp() {
       try {
         decodedToken = await getAuth().verifyIdToken(idToken);
       } catch (verifyErr: any) {
-        console.warn('[Auth] Firebase verifyIdToken note:', verifyErr.message);
-        // If Firebase Admin has no local service account credentials, verify Google/Firebase token structure
+        console.warn('[Auth] Firebase verifyIdToken fallback:', verifyErr.message);
         const tokenPayload = jwt.decode(idToken) as any;
         if (
           tokenPayload &&
@@ -718,136 +1071,355 @@ export async function getApp() {
             email: tokenPayload.email,
             name: tokenPayload.name,
             picture: tokenPayload.picture,
+            firebase: tokenPayload.firebase,
           };
         } else {
           throw verifyErr;
         }
       }
 
-      const email = decodedToken.email ? decodedToken.email.toLowerCase() : null;
       const uid = decodedToken.uid;
-      
-      let user = null;
-      if (email) {
-        user = await db.collection('users').findOne({
-          $or: [{ providerId: uid }, { email: email }]
-        });
-      } else {
-        user = await db.collection('users').findOne({ providerId: uid });
+      const rawEmail = decodedToken.email ? decodedToken.email.trim() : null;
+      const normalizedEmail = rawEmail ? rawEmail.toLowerCase() : null;
+      const displayName = decodedToken.name || (rawEmail ? rawEmail.split('@')[0] : 'Officer');
+      const photoURL = decodedToken.picture || null;
+
+      // Determine provider name ('google' or 'facebook')
+      const tokenSignInProvider = decodedToken.firebase?.sign_in_provider || '';
+      let providerName = 'google';
+      if (
+        (provider && String(provider).toLowerCase().includes('facebook')) ||
+        tokenSignInProvider.includes('facebook')
+      ) {
+        providerName = 'facebook';
       }
-      
+
+      // Step 1: Check if an existing account exists by provider ID
+      let user = await currentDb.collection('users').findOne({
+        $or: [
+          { uid: uid },
+          { providerId: uid },
+          { [`providerIds.${providerName}`]: uid },
+          { 'providerIds.firebase': uid },
+        ],
+      });
+
+      const now = new Date().toISOString();
+
+      // Step 2: Account Linking if user exists by verified email
+      if (!user && normalizedEmail) {
+        user = await currentDb.collection('users').findOne({ email: normalizedEmail });
+        if (user) {
+          console.info(`[Auth] Secure Account Linking: Linking ${providerName} UID '${uid}' to existing account for '${normalizedEmail}'.`);
+          const existingProviders: string[] = Array.isArray(user.authProviders)
+            ? user.authProviders
+            : [user.authProvider || 'credentials'];
+          const updatedProviders = Array.from(new Set([...existingProviders, providerName]));
+
+          const updatedProviderIds = {
+            ...(user.providerIds || {}),
+            [providerName]: uid,
+          };
+
+          await currentDb.collection('users').updateOne(
+            { _id: user._id },
+            {
+              $set: {
+                authProviders: updatedProviders,
+                providerIds: updatedProviderIds,
+                emailVerified: true,
+                ...(photoURL && !user.profilePhoto ? { profilePhoto: photoURL, photoURL } : {}),
+                lastLoginAt: now,
+                lastActivityAt: now,
+                updatedAt: now,
+              },
+            }
+          );
+
+          user = await currentDb.collection('users').findOne({ _id: user._id });
+          await logActivity(
+            currentDb,
+            user.uid || user._id.toString(),
+            'ACCOUNT_LOGIN',
+            `Linked and signed in with ${providerName} (@${normalizedEmail})`,
+            uid
+          );
+        }
+      }
+
+      // Step 3: First-time Social Registration if no user found
       if (!user) {
-        // Create new user from social login
-        const newUser = {
-          email: email,
-          displayName: decodedToken.name || (email ? email.split('@')[0] : 'Officer'),
-          photoURL: decodedToken.picture || null,
-          authProvider: provider || 'oauth',
-          providerId: uid,
-          badgeNumber: '',
-          policeStation: '',
-          district: '',
-          rank: 'Officer',
-          createdAt: new Date(),
-          updatedAt: new Date()
+        const uniqueUsername = normalizedEmail
+          ? normalizedEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, '') + '_' + Math.random().toString(36).substring(2, 5)
+          : `${providerName}_${uid.slice(-6)}`;
+
+        const newUserDoc = {
+          _id: uid,
+          uid: uid,
+          fullName: displayName,
+          displayName: displayName,
+          username: uniqueUsername,
+          email: normalizedEmail || `${uid}@${providerName}.user.summonsmitra`,
+          emailVerified: Boolean(normalizedEmail),
+          authProviders: [providerName],
+          authProvider: providerName,
+          providerIds: { [providerName]: uid, firebase: uid },
+          profilePhoto: photoURL,
+          photoURL: photoURL,
+          badgeNumber: 'DL-POL-' + uid.slice(-4).toUpperCase(),
+          policeStation: 'Connaught Place PS',
+          district: 'Central District, Delhi',
+          rank: 'Sub-Inspector',
+          accountStatus: 'active',
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: now,
+          lastActivityAt: now,
+          upcomingAlertDays: 7,
         };
-        const result = await db.collection('users').insertOne(newUser);
-        user = { ...newUser, _id: result.insertedId };
+
+        await currentDb.collection('users').insertOne(newUserDoc);
+        console.info(`[Auth] Created new ${providerName} user record for UID '${uid}' (${normalizedEmail || 'no email'}).`);
+        user = newUserDoc;
+
+        await logActivity(
+          currentDb,
+          uid,
+          'ACCOUNT_REGISTERED',
+          `Created new account via ${providerName} (@${user.username})`,
+          uid
+        );
       } else {
-        // Update existing user's last login
-        await db.collection('users').updateOne(
+        // Subsequent social login: update timestamps and photoURL if available
+        await currentDb.collection('users').updateOne(
           { _id: user._id },
-          { $set: { updatedAt: new Date() } }
+          {
+            $set: {
+              lastLoginAt: now,
+              lastActivityAt: now,
+              ...(photoURL && !user.profilePhoto ? { profilePhoto: photoURL, photoURL } : {}),
+            },
+          }
+        );
+        user = await currentDb.collection('users').findOne({ _id: user._id });
+        await logActivity(
+          currentDb,
+          user.uid || user._id.toString(),
+          'ACCOUNT_LOGIN',
+          `Signed in via ${providerName}`,
+          uid
         );
       }
 
-      const token = jwt.sign({ userId: user._id.toString(), firebaseUid: user.providerId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      const sessionUid = user.uid || user.providerId || user._id.toString();
+      const token = jwt.sign(
+        { userId: user._id.toString(), uid: sessionUid, email: user.email, username: user.username },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
       setAuthCookie(res, token);
-      
-      delete user.password;
-      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+
+      const sanitized = sanitizeUser(user);
+      const stats = await getUserStats(currentDb, sessionUid, user.email);
+
+      res.status(200).json({
+        success: true,
+        token,
+        message: 'Social authentication verified',
+        user: { ...sanitized, stats },
+      });
     } catch (err: any) {
       console.warn('[Auth] Social login error:', err.message || err);
-      res.status(401).json({ error: 'Invalid social authentication token' });
+      res.status(401).json({ error: err.message || 'Invalid social authentication credentials' });
     }
   });
 
+  // 4. Google Fallback Endpoint for Instant Verification
   app.post('/api/auth/google-fallback', async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     if (!process.env.JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET missing on server' });
 
     try {
       const { email, displayName, photoURL } = req.body;
       const targetEmail = (email || 'chetna2manju@gmail.com').toLowerCase().trim();
       const targetName = displayName || (targetEmail ? targetEmail.split('@')[0] : 'Officer');
+      const now = new Date().toISOString();
 
-      let user = await db.collection('users').findOne({ email: targetEmail });
+      let user = await currentDb.collection('users').findOne({ email: targetEmail });
       if (!user) {
+        const uid = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         const newUser = {
+          _id: uid,
+          uid: uid,
           email: targetEmail,
+          fullName: targetName,
           displayName: targetName,
+          username: targetEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, ''),
           photoURL: photoURL || null,
+          profilePhoto: photoURL || null,
           badgeNumber: 'DL-POL-4402',
           policeStation: 'Connaught Place PS',
           district: 'Central District, Delhi',
           rank: 'Sub-Inspector',
+          authProviders: ['google'],
           authProvider: 'google',
-          providerId: 'google_' + targetEmail.replace(/[^a-zA-Z0-9]/g, '_'),
-          createdAt: new Date(),
-          updatedAt: new Date()
+          providerIds: { google: uid },
+          emailVerified: true,
+          accountStatus: 'active',
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: now,
+          lastActivityAt: now,
+          upcomingAlertDays: 7,
         };
-        const result = await db.collection('users').insertOne(newUser);
-        user = { ...newUser, _id: result.insertedId };
+        await currentDb.collection('users').insertOne(newUser);
+        user = newUser;
+        await logActivity(currentDb, uid, 'ACCOUNT_REGISTERED', `Created account via Google fallback (${targetEmail})`, uid);
       } else {
-        await db.collection('users').updateOne(
+        await currentDb.collection('users').updateOne(
           { _id: user._id },
-          { $set: { updatedAt: new Date() } }
+          { $set: { lastLoginAt: now, lastActivityAt: now, updatedAt: now } }
         );
+        user = await currentDb.collection('users').findOne({ _id: user._id });
       }
 
-      const uid = user.providerId || user._id.toString();
+      const uid = user.uid || user.providerId || user._id.toString();
       const token = jwt.sign(
-        { userId: user._id.toString(), firebaseUid: uid },
+        { userId: user._id.toString(), uid, email: user.email, username: user.username },
         process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
       setAuthCookie(res, token);
 
-      delete user.password;
-      res.json({ user: { ...user, uid } });
+      const sanitized = sanitizeUser(user);
+      const stats = await getUserStats(currentDb, uid, user.email);
+
+      res.json({ success: true, token, user: { ...sanitized, stats } });
     } catch (err: any) {
       console.warn('[Auth] Google fallback login error:', err.message || err);
       res.status(500).json({ error: err.message });
     }
   });
 
+  // 5. Logout Endpoint
   app.post('/api/auth/logout', (req: any, res: any) => {
     res.clearCookie('auth_token', {
       httpOnly: true,
       secure: true,
       sameSite: 'none'
     });
-    res.json({ success: true });
+    res.json({ success: true, message: 'Logged out successfully' });
   });
 
-  app.put('/api/auth/me', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+  // 6. User Profile Retrieval Endpoint (GET /api/auth/me and GET /api/users/profile)
+  const handleGetProfile = async (req: any, res: any) => {
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      const updates = { ...req.body };
-      delete updates._id;
-      delete updates.uid;
-      delete updates.providerId;
-      delete updates.password;
-      delete updates.createdAt;
-      
-      updates.updatedAt = new Date();
+      let user = null;
+      if (req.user._id) {
+        user = ObjectId.isValid(req.user._id)
+          ? await currentDb.collection('users').findOne({ _id: new ObjectId(req.user._id) })
+          : await currentDb.collection('users').findOne({ _id: req.user._id });
+      }
+      if (!user && req.user.uid) {
+        user = await currentDb.collection('users').findOne({
+          $or: [
+            { uid: req.user.uid },
+            { providerId: req.user.uid },
+            { 'providerIds.google': req.user.uid },
+            { 'providerIds.facebook': req.user.uid },
+            { _id: req.user.uid },
+          ]
+        });
+      }
+      if (!user && req.user.email) {
+        user = await currentDb.collection('users').findOne({ email: req.user.email });
+      }
 
-      const filter = req.user._id
+      if (!user) {
+        return res.status(404).json({ error: 'User account record not found in MongoDB' });
+      }
+
+      const uid = user.uid || user.providerId || user._id.toString();
+      const sanitized = sanitizeUser(user);
+      const stats = await getUserStats(currentDb, uid, user.email);
+
+      res.status(200).json({
+        success: true,
+        user: { ...sanitized, stats },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  app.get('/api/auth/me', requireAuth, handleGetProfile);
+  app.get('/api/users/profile', requireAuth, handleGetProfile);
+
+  // 7. User Profile Update Endpoint (PUT /api/auth/me and PUT /api/users/profile)
+  const handleUpdateProfile = async (req: any, res: any) => {
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
+    try {
+      const allowedKeys = [
+        'fullName',
+        'displayName',
+        'username',
+        'badgeNumber',
+        'rank',
+        'policeStation',
+        'district',
+        'photoURL',
+        'profilePhoto',
+        'upcomingAlertDays',
+      ];
+
+      const updates: Record<string, any> = {};
+      for (const k of allowedKeys) {
+        if (req.body[k] !== undefined) {
+          updates[k] = req.body[k];
+        }
+      }
+
+      // Sync displayName with fullName if provided
+      if (updates.fullName && !updates.displayName) {
+        updates.displayName = updates.fullName;
+      } else if (updates.displayName && !updates.fullName) {
+        updates.fullName = updates.displayName;
+      }
+
+      // Sync photoURL with profilePhoto
+      if (updates.photoURL) {
+        updates.profilePhoto = updates.photoURL;
+      } else if (updates.profilePhoto) {
+        updates.photoURL = updates.profilePhoto;
+      }
+
+      const now = new Date().toISOString();
+      updates.updatedAt = now;
+      updates.lastActivityAt = now;
+
+      const userFilter = req.user._id
         ? (ObjectId.isValid(req.user._id) ? { _id: new ObjectId(req.user._id) } : { _id: req.user._id })
-        : { providerId: req.user.uid };
-      
-      const result = await db.collection('users').findOneAndUpdate(
-        filter,
+        : { $or: [{ uid: req.user.uid }, { providerId: req.user.uid }] };
+
+      // If username is being changed, ensure it is unique
+      if (updates.username) {
+        const normUser = String(updates.username).toLowerCase().trim();
+        const existingWithUsername = await currentDb.collection('users').findOne({
+          username: normUser,
+          _id: { $ne: req.user._id },
+        });
+        if (existingWithUsername && existingWithUsername.uid !== req.user.uid) {
+          return res.status(409).json({ error: 'This username is already taken by another officer.' });
+        }
+        updates.username = normUser;
+      }
+
+      const result = await currentDb.collection('users').findOneAndUpdate(
+        userFilter,
         { $set: updates },
         { returnDocument: 'after' }
       );
@@ -855,36 +1427,51 @@ export async function getApp() {
       if (!result) {
         return res.status(404).json({ error: 'User not found' });
       }
-      
-      const user = result;
-      delete user.password;
-      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+
+      const uid = result.uid || result.providerId || result._id.toString();
+      await logActivity(
+        currentDb,
+        uid,
+        'PROFILE_UPDATED',
+        `Officer profile updated for ${result.fullName || result.displayName || result.username}`,
+        uid,
+        { updatedFields: Object.keys(updates) }
+      );
+
+      const sanitized = sanitizeUser(result);
+      const stats = await getUserStats(currentDb, uid, result.email);
+
+      res.status(200).json({
+        success: true,
+        message: 'Profile updated successfully',
+        user: { ...sanitized, stats },
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
-  });
+  };
 
-  app.get('/api/auth/me', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+  app.put('/api/auth/me', requireAuth, handleUpdateProfile);
+  app.put('/api/users/profile', requireAuth, handleUpdateProfile);
+
+  // 8. User Activities Audit Trail Endpoint
+  app.get('/api/activities', requireAuth, async (req: any, res: any) => {
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      let user = null;
-      if (req.user._id) {
-        user = ObjectId.isValid(req.user._id)
-          ? await db.collection('users').findOne({ _id: new ObjectId(req.user._id) })
-          : await db.collection('users').findOne({ _id: req.user._id });
-      }
-      if (!user && req.user.uid) {
-        user = await db.collection('users').findOne({ providerId: req.user.uid });
-      }
-      if (!user && req.user.uid) {
-        user = await db.collection('users').findOne({ _id: req.user.uid });
-      }
-      
-      if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-      delete user.password;
-      res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+      const activities = await currentDb
+        .collection('activities')
+        .find({ userId: req.user.uid })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .toArray();
+
+      res.status(200).json(
+        activities.map((a: any) => ({
+          ...a,
+          id: a._id?.toString ? a._id.toString() : String(a._id),
+        }))
+      );
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1096,6 +1683,16 @@ export async function getApp() {
 
       console.info(`[MongoDB] Summons '${docId}' saved for user '${req.user.uid}' in database '${currentDb.databaseName || 'summons_app'}'.`);
 
+      // Log activity
+      await logActivity(
+        currentDb,
+        req.user.uid,
+        'SUMMON_CREATED',
+        `Added summon ${summon.summonNumber || docId} for ${summon.personName || 'person'}`,
+        docId,
+        { summonNumber: summon.summonNumber, personName: summon.personName, courtName: summon.courtName }
+      );
+
       // Trigger background push check for upcoming/today hearings
       setTimeout(() => {
         checkAndDispatchHearingNotifications(req.user.uid).catch((e) =>
@@ -1142,6 +1739,18 @@ export async function getApp() {
 
       const updatedDoc = await currentDb.collection('summons').findOne({ $and: [idFilter, userFilter] });
 
+      const isServed = updates.status === 'Completed' || updates.status === 'Served';
+      await logActivity(
+        currentDb,
+        req.user.uid,
+        isServed ? 'SUMMON_SERVED' : 'SUMMON_UPDATED',
+        isServed
+          ? `Marked summon ${updatedDoc?.summonNumber || id} as served/closed`
+          : `Updated details for summon ${updatedDoc?.summonNumber || id}`,
+        id,
+        { status: updates.status, summonNumber: updatedDoc?.summonNumber }
+      );
+
       // Trigger background push check after updates
       setTimeout(() => {
         checkAndDispatchHearingNotifications(req.user.uid).catch((e) =>
@@ -1181,6 +1790,15 @@ export async function getApp() {
 
       await currentDb.collection('notifications').deleteMany({ summonsId: id });
       console.info(`[MongoDB] Summons delete '${id}': deleted=${result.deletedCount}`);
+
+      await logActivity(
+        currentDb,
+        req.user.uid,
+        'SUMMON_DELETED',
+        `Deleted summon record ${id}`,
+        id
+      );
+
       res.status(200).json({ success: true, deletedCount: result.deletedCount });
     } catch (err: any) {
       console.error('[MongoDB] Summons delete error:', err);
@@ -2099,18 +2717,20 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
 
   // Schedule periodic background hearing check every 2 minutes (when server is long-running)
-  if (process.env.VERCEL !== '1' && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    setInterval(() => {
+  if (process.env.VERCEL !== '1' && !process.env.AWS_LAMBDA_FUNCTION_NAME && process.env.NODE_ENV !== 'test') {
+    const hearingInterval = setInterval(() => {
       checkAndDispatchHearingNotifications().catch((err) => {
         console.error('[Scheduler] Periodic background push check error:', err);
       });
     }, 2 * 60 * 1000);
+    if (hearingInterval.unref) hearingInterval.unref();
 
-    setTimeout(() => {
+    const hearingStartup = setTimeout(() => {
       checkAndDispatchHearingNotifications().catch((err) => {
         console.warn('[Startup] Initial push check error:', err);
       });
     }, 3000);
+    if (hearingStartup.unref) hearingStartup.unref();
   }
 
   return { app, db, mongoClient };

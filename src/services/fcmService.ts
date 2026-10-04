@@ -1,5 +1,6 @@
 // Summons Mitra - Firebase Cloud Messaging & Web Push Client Service
 import { auth, isFirebaseConfigured } from './firebase';
+import { getAuthHeaders } from './apiClient';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -62,16 +63,11 @@ export async function registerPushServiceWorker(): Promise<ServiceWorkerRegistra
 }
 
 async function getAuthHeader(): Promise<Record<string, string>> {
-  const user = auth.currentUser;
-  if (user) {
-    try {
-      const token = await user.getIdToken();
-      return { Authorization: `Bearer ${token}` };
-    } catch (e) {
-      // Fallback
-    }
+  try {
+    return await getAuthHeaders();
+  } catch (_) {
+    return {};
   }
-  return {};
 }
 
 export async function fetchVapidPublicKey(): Promise<string> {

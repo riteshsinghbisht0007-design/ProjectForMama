@@ -1,7 +1,7 @@
 import { auth } from './firebase';
 
 /**
- * Returns authenticated headers including Bearer token if user is signed in with Firebase
+ * Returns authenticated headers including Bearer token if user is signed in with Firebase or local session
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
@@ -14,10 +14,22 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
       const idToken = await currentUser.getIdToken();
       if (idToken) {
         headers['Authorization'] = `Bearer ${idToken}`;
+        return headers;
       }
     }
   } catch (err) {
     console.warn('[ApiClient] Failed to acquire Firebase ID token:', err);
+  }
+
+  // Fallback: check stored local session token from login/register
+  if (typeof window !== 'undefined') {
+    const localToken =
+      sessionStorage.getItem('sm_auth_token') ||
+      localStorage.getItem('sm_auth_token');
+    if (localToken) {
+      headers['Authorization'] = `Bearer ${localToken}`;
+      headers['x-auth-token'] = localToken;
+    }
   }
 
   return headers;

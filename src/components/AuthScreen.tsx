@@ -32,6 +32,7 @@ export const AuthScreen: React.FC = () => {
   const [emailOrBadge, setEmailOrBadge] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
   const [badgeNumber, setBadgeNumber] = useState('');
   const [policeStation, setPoliceStation] = useState('PS Tis Hazari');
   const [district, setDistrict] = useState('Central District, Delhi');
@@ -130,31 +131,54 @@ export const AuthScreen: React.FC = () => {
     setResetSuccess(null);
 
     if (!emailOrBadge.trim() || !password.trim()) {
-      setLocalError('Officer ID / Email and Password are required');
+      setLocalError('Username/Email and Password are required');
       return;
     }
 
     setLoading(true);
     try {
       if (mode === 'register') {
-        if (!displayName.trim() || !badgeNumber.trim()) {
-          setLocalError('Officer Full Name and Badge Number are required for registration');
+        const fullNameTrimmed = displayName.trim();
+        const usernameTrimmed = username.trim();
+        const emailTrimmed = emailOrBadge.trim();
+
+        if (!fullNameTrimmed || fullNameTrimmed.length < 2) {
+          setLocalError('Full Name is required (minimum 2 characters)');
           setLoading(false);
           return;
         }
 
-        const email = emailOrBadge.includes('@')
-          ? emailOrBadge.trim()
-          : `${emailOrBadge.trim().toLowerCase()}@delhipolice.gov.in`;
+        const usernameCandidate = (usernameTrimmed || emailTrimmed.split('@')[0]).toLowerCase();
+        if (!/^[a-zA-Z0-9_-]{3,30}$/.test(usernameCandidate)) {
+          setLocalError('Username must be 3-30 characters long (letters, numbers, underscore, hyphen only)');
+          setLoading(false);
+          return;
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(emailTrimmed)) {
+          setLocalError('Please enter a valid email address');
+          setLoading(false);
+          return;
+        }
+
+        if (password.length < 6) {
+          setLocalError('Password must be at least 6 characters long');
+          setLoading(false);
+          return;
+        }
+
+        const effectiveBadge = badgeNumber.trim() || ('DL-' + Math.floor(1000 + Math.random() * 9000));
 
         const success = await registerOfficer(
-          displayName.trim(),
-          badgeNumber.trim(),
-          email,
+          fullNameTrimmed,
+          effectiveBadge,
+          emailTrimmed,
           policeStation.trim(),
           district.trim(),
           rank,
-          password
+          password,
+          usernameCandidate
         );
 
         if (!success && !authError) {
@@ -413,7 +437,7 @@ export const AuthScreen: React.FC = () => {
                   <>
                     <div>
                       <label className="text-xs font-medium text-muted-foreground block mb-1">
-                        Officer Full Name
+                        Full Name <span className="text-red-500">*</span>
                       </label>
                       <div className="relative">
                         <User className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
@@ -421,8 +445,29 @@ export const AuthScreen: React.FC = () => {
                           type="text"
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
-                          placeholder="e.g. Inspector Rakesh Sharma"
+                          placeholder="e.g. Inspector Rajesh Sharma"
                           className="w-full bg-background border border-border rounded-xl pl-9 pr-3 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Unique Username <span className="text-red-500">*</span>
+                        </label>
+                        <span className="text-[10px] text-muted-foreground font-mono">3-30 chars (letters/numbers/_)</span>
+                      </div>
+                      <div className="relative">
+                        <span className="text-xs font-mono text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 font-bold">@</span>
+                        <input
+                          type="text"
+                          id="register-username-input"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                          placeholder="rsharma_dl"
+                          className="w-full bg-background border border-border rounded-xl pl-8 pr-3 py-2 text-xs text-foreground font-mono placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
                           required
                         />
                       </div>
@@ -431,7 +476,7 @@ export const AuthScreen: React.FC = () => {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs font-medium text-muted-foreground block mb-1">
-                          Badge Number
+                          Badge Number (Optional)
                         </label>
                         <input
                           type="text"
@@ -439,7 +484,6 @@ export const AuthScreen: React.FC = () => {
                           onChange={(e) => setBadgeNumber(e.target.value)}
                           placeholder="e.g. DL-4402"
                           className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder-muted-foreground-alt font-mono focus:outline-none focus:border-primary-text"
-                          required
                         />
                       </div>
 
@@ -489,16 +533,24 @@ export const AuthScreen: React.FC = () => {
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">
-                    {mode === 'register' ? 'Official Email / ID' : 'Badge # or Official Email'}
+                    {mode === 'register' ? (
+                      <span>Email Address <span className="text-red-500">*</span></span>
+                    ) : (
+                      'Username, Badge # or Email'
+                    )}
                   </label>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
-                      type="text"
+                      type={mode === 'register' ? 'email' : 'text'}
                       id="auth-email-input"
                       value={emailOrBadge}
                       onChange={(e) => setEmailOrBadge(e.target.value)}
-                      placeholder="e.g. DL-4402 or officer@delhipolice.gov.in"
+                      placeholder={
+                        mode === 'register'
+                          ? 'officer@delhipolice.gov.in or name@gmail.com'
+                          : 'e.g. rsharma, DL-POL-4402, or officer@delhipolice.gov.in'
+                      }
                       className="w-full bg-background border border-border rounded-xl pl-9 pr-3 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
                       required
                     />

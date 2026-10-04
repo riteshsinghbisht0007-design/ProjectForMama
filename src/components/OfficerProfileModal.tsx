@@ -3,7 +3,6 @@ import {
   X,
   User,
   Shield,
-  BadgeAlert,
   LogOut,
   Save,
   CheckCircle2,
@@ -12,6 +11,14 @@ import {
   Mail,
   Camera,
   Star,
+  Calendar,
+  Clock,
+  Activity,
+  FileText,
+  AlertTriangle,
+  CheckCircle,
+  Hash,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSummons } from '../context/SummonContext';
@@ -30,7 +37,9 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const { currentUser, logout, updateOfficerProfile } = useAuth();
   const { summons } = useSummons();
 
+  const [activeTab, setActiveTab] = useState<'profile' | 'activities' | 'edit'>('profile');
   const [displayName, setDisplayName] = useState(currentUser?.displayName || '');
+  const [username, setUsername] = useState(currentUser?.username || '');
   const [badgeNumber, setBadgeNumber] = useState(currentUser?.badgeNumber || '');
   const [policeStation, setPoliceStation] = useState(currentUser?.policeStation || '');
   const [district, setDistrict] = useState(currentUser?.district || '');
@@ -38,23 +47,60 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
   const [upcomingAlertDays, setUpcomingAlertDays] = useState(currentUser?.upcomingAlertDays || 7);
   const [photoURL, setPhotoURL] = useState(currentUser?.photoURL || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
 
+  // Real-time backend stats and activity trail
+  const [profileStats, setProfileStats] = useState<any>(currentUser?.stats || null);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [isLoadingActivities, setIsLoadingActivities] = useState<boolean>(false);
+
   useEffect(() => {
     if (currentUser) {
-      setDisplayName(currentUser.displayName || '');
+      setDisplayName(currentUser.displayName || currentUser.fullName || '');
+      setUsername(currentUser.username || '');
       setBadgeNumber(currentUser.badgeNumber || '');
       setPoliceStation(currentUser.policeStation || '');
       setDistrict(currentUser.district || '');
       setRank(currentUser.rank || '');
       setUpcomingAlertDays(currentUser.upcomingAlertDays || 7);
-      setPhotoURL(currentUser.photoURL || '');
+      setPhotoURL(currentUser.photoURL || currentUser.profilePhoto || '');
+      if (currentUser.stats) {
+        setProfileStats(currentUser.stats);
+      }
     }
   }, [currentUser]);
+
+  // Fetch fresh profile with real-time stats and activity log on modal open
+  useEffect(() => {
+    if (isOpen && currentUser) {
+      // 1. Fetch fresh profile & statistics from MongoDB
+      fetch('/api/auth/me', { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.user?.stats) {
+            setProfileStats(data.user.stats);
+          }
+        })
+        .catch(() => {});
+
+      // 2. Fetch user activity history
+      setIsLoadingActivities(true);
+      fetch('/api/activities', { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setActivities(data);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsLoadingActivities(false));
+    }
+  }, [isOpen, currentUser]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -69,21 +115,33 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
 
   if (!isOpen || !currentUser) return null;
 
+  // Compute calculated metrics
+  const totalSummonsCount = profileStats?.totalSummons ?? summons.length;
+  const closedCount = profileStats?.closedSummons ?? summons.filter((s) => s.status === 'Completed' || s.status === 'Served').length;
+  const activeCount = profileStats?.activeSummons ?? (totalSummonsCount - closedCount);
+  const urgentCount = profileStats?.urgentSummons ?? summons.filter((s) => s.urgency === 'Urgent').length;
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    setSaveError(null);
     try {
       await updateOfficerProfile({
         displayName,
+        fullName: displayName,
+        username: username.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
         badgeNumber,
         policeStation,
         district,
         rank,
         photoURL,
+        profilePhoto: photoURL,
         upcomingAlertDays,
       });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to update profile');
     } finally {
       setIsSaving(false);
     }
@@ -105,10 +163,9 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setAvatarError(null);
-    
-    // Check file size (e.g. max 5MB)
+
     if (file.size > 5 * 1024 * 1024) {
-      setAvatarError("Image is too large. Please select an image under 5MB.");
+      setAvatarError('Image is too large. Please select an image under 5MB.');
       return;
     }
 
@@ -117,7 +174,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
       setCropImageSrc(reader.result as string);
     };
     reader.readAsDataURL(file);
-    e.target.value = ''; // Reset input
+    e.target.value = '';
   };
 
   const handleCropComplete = (croppedBlob: Blob) => {
@@ -127,12 +184,32 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
     reader.onload = () => {
       const base64 = reader.result as string;
       setPhotoURL(base64);
-      updateOfficerProfile({ photoURL: base64 }).catch(err => {
-        setAvatarError("Failed to save profile picture: " + err.message);
+      updateOfficerProfile({ photoURL: base64, profilePhoto: base64 }).catch((err) => {
+        setAvatarError('Failed to save profile picture: ' + err.message);
       });
     };
     reader.readAsDataURL(croppedBlob);
   };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return 'Active session';
+    try {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch (_) {
+      return dateStr;
+    }
+  };
+
+  const providers = Array.isArray(currentUser.authProviders) && currentUser.authProviders.length > 0
+    ? currentUser.authProviders
+    : [currentUser.authProvider || 'credentials'];
 
   return (
     <div
@@ -144,17 +221,17 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
       }}
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md overflow-y-auto animate-fadeIn"
     >
-      <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-premium-hover animate-scaleIn flex flex-col">
+      <div className="bg-background border border-border rounded-2xl w-full max-w-lg my-8 overflow-hidden shadow-2xl animate-scaleIn flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between">
+        <div className="bg-background-alt border-b border-border px-6 py-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-muted text-primary-text border border-border">
               <Shield className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-foreground">Officer Profile & Telemetry</h2>
+              <h2 className="text-lg font-bold text-foreground">Officer Account & Profile</h2>
               <p className="text-xs text-muted-foreground">
-                Authenticated as Law Enforcement Personnel
+                Verified Law Enforcement Judicial Portal Session
               </p>
             </div>
           </div>
@@ -168,11 +245,51 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Officer Identity Card */}
+        {/* Tab Navigation */}
+        <div className="flex border-b border-border bg-card px-6 pt-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab('profile')}
+            className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'profile'
+                ? 'border-primary-text text-primary-text'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>Profile & Statistics</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('edit')}
+            className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'edit'
+                ? 'border-primary-text text-primary-text'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Edit Credentials</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('activities')}
+            className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'activities'
+                ? 'border-primary-text text-primary-text'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Activity Trail ({activities.length})</span>
+          </button>
+        </div>
+
+        {/* Modal Scrollable Body */}
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* Identity Card */}
           <div className="flex items-center gap-4 p-4 bg-card border border-border rounded-xl relative shadow-sm">
-            <div className="relative">
+            <div className="relative shrink-0">
               {photoURL ? (
                 <img
                   src={photoURL}
@@ -180,8 +297,8 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
                   className="w-16 h-16 rounded-xl object-cover border-2 border-border-strong"
                 />
               ) : (
-                <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center text-muted-foreground border-2 border-border-strong">
-                  <User className="w-8 h-8" />
+                <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center text-muted-foreground border-2 border-border-strong font-bold text-lg">
+                  {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : 'O'}
                 </div>
               )}
               <label
@@ -201,17 +318,29 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-foreground truncate">{currentUser.displayName}</h3>
-                <span className="px-2 py-0.5 text-[10px] font-mono bg-muted text-foreground border border-border rounded uppercase">
-                  {currentUser.authProvider}
-                </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-foreground truncate">
+                  {currentUser.fullName || currentUser.displayName}
+                </h3>
+                {providers.map((p) => (
+                  <span
+                    key={p}
+                    className="px-2 py-0.5 text-[10px] font-mono bg-muted text-foreground border border-border rounded uppercase font-semibold"
+                  >
+                    {p}
+                  </span>
+                ))}
               </div>
-              <p className="text-xs font-mono text-warning mt-0.5">
-                Badge #{currentUser.badgeNumber} • {currentUser.rank}
+              <p className="text-xs font-mono text-primary-text font-medium mt-0.5">
+                @{currentUser.username || (currentUser.email ? currentUser.email.split('@')[0] : 'officer')}
               </p>
               <p className="text-xs text-muted-foreground truncate mt-0.5">
-                {currentUser.policeStation}, {currentUser.district}
+                {currentUser.badgeNumber ? `Badge #${currentUser.badgeNumber} • ` : ''}
+                {currentUser.rank} • {currentUser.policeStation || 'Delhi Police'}
+              </p>
+              <p className="text-[11px] text-muted-foreground truncate mt-0.5 flex items-center gap-1">
+                <Mail className="w-3 h-3 shrink-0" />
+                <span>{currentUser.email}</span>
               </p>
             </div>
           </div>
@@ -229,126 +358,263 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </div>
           )}
 
-          {/* System Telemetry & Isolation */}
-          <div className="p-3.5 bg-background-alt border border-border rounded-xl text-xs space-y-2">
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>Hardware-Isolated Account:</span>
-              <span className="font-mono text-foreground text-[11px]">{currentUser.uid}</span>
-            </div>
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>Active User Records:</span>
-              <span className="font-mono text-primary-text">{summons.length} Summons</span>
-            </div>
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>Encryption Protocol:</span>
-              <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
-                <CheckCircle2 className="w-3.5 h-3.5" /> End-to-End Vault
-              </span>
-            </div>
-          </div>
-
-          {/* Edit Form */}
-          <form onSubmit={handleSave} className="space-y-3 border-t border-border pt-4">
-            <span className="text-xs font-bold text-primary-text uppercase tracking-wider block">
-              Officer Credentials
-            </span>
-
-            {saveSuccess && (
-              <div className="p-2 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-700/60 dark:text-emerald-300 rounded text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" /> Profile credentials updated successfully!
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
+          {/* TAB 1: Profile & Statistics */}
+          {activeTab === 'profile' && (
+            <div className="space-y-4">
+              {/* Metric Cards Grid */}
               <div>
-                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Full Officer Name</label>
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block mb-2">
+                  Account Summons Telemetry
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="p-3 bg-background-alt border border-border rounded-xl text-center">
+                    <span className="text-[11px] text-muted-foreground block">Total Records</span>
+                    <span className="text-xl font-bold font-mono text-foreground">{totalSummonsCount}</span>
+                  </div>
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-center">
+                    <span className="text-[11px] text-blue-600 dark:text-blue-400 block">Active / Pending</span>
+                    <span className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400">{activeCount}</span>
+                  </div>
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-center">
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 block">Served / Closed</span>
+                    <span className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">{closedCount}</span>
+                  </div>
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-center">
+                    <span className="text-[11px] text-amber-600 dark:text-amber-400 block">Urgent Priority</span>
+                    <span className="text-xl font-bold font-mono text-amber-600 dark:text-amber-400">{urgentCount}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Account Metadata Details */}
+              <div className="p-3.5 bg-background-alt border border-border rounded-xl text-xs space-y-2.5">
+                <span className="text-xs font-bold text-foreground block border-b border-border/60 pb-1.5">
+                  Permanent Database Records (MongoDB `summons_app`)
+                </span>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Unique User ID:</span>
+                  <span className="font-mono text-foreground text-[11px] select-all">{currentUser.uid}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Registered Username:</span>
+                  <span className="font-mono text-foreground font-semibold">@{currentUser.username || 'officer'}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Linked Auth Providers:</span>
+                  <div className="flex gap-1">
+                    {providers.map((p) => (
+                      <span key={p} className="px-1.5 py-0.2 bg-muted text-foreground text-[10px] rounded uppercase font-mono">
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Account Creation Date:</span>
+                  <span className="font-mono text-foreground text-[11px]">{formatDate(currentUser.createdAt)}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Last Login Timestamp:</span>
+                  <span className="font-mono text-foreground text-[11px]">{formatDate(currentUser.lastLoginAt)}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Data Vault Isolation:</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium text-[11px]">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Hardware-Scoped Tenant
+                  </span>
+                </div>
+              </div>
+
+              {/* App Review Trigger */}
+              <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl flex items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                    <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                    <span>Officer App Feedback & Rating</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Share operational suggestions or rate the judicial docket tracking experience.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  id="review-my-app-btn"
+                  onClick={() => setIsReviewModalOpen(true)}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg shrink-0 transition-colors shadow-sm cursor-pointer"
+                >
+                  Review App
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: Edit Credentials */}
+          {activeTab === 'edit' && (
+            <form onSubmit={handleSave} className="space-y-3.5">
+              <span className="text-xs font-bold text-primary-text uppercase tracking-wider block">
+                Update Editable Profile Fields
+              </span>
+
+              {saveSuccess && (
+                <div className="p-2.5 bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-700/60 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>Profile updated and synchronized to MongoDB Atlas successfully!</span>
+                </div>
+              )}
+
+              {saveError && (
+                <div className="p-2.5 bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/40 dark:border-red-700/60 dark:text-red-300 rounded-xl text-xs flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{saveError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground block mb-1">
+                  Full Officer Name
+                </label>
                 <input
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
+                  required
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Badge Number</label>
-                <input
-                  type="text"
-                  value={badgeNumber}
-                  onChange={(e) => setBadgeNumber(e.target.value)}
-                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Rank / Designation</label>
-                <input
-                  type="text"
-                  value={rank}
-                  onChange={(e) => setRank(e.target.value)}
-                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-medium text-foreground-alt block mb-1">Police Station</label>
-                <input
-                  type="text"
-                  value={policeStation}
-                  onChange={(e) => setPoliceStation(e.target.value)}
-                  className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-medium text-foreground-alt block mb-1">District / Jurisdiction</label>
-              <input
-                type="text"
-                value={district}
-                onChange={(e) => setDistrict(e.target.value)}
-                className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
-              />
-            </div>
-
-            <div className="pt-2 flex justify-end">
-              <button
-                type="submit"
-                className="px-4 py-2.5 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" /> Save Profile
-              </button>
-            </div>
-          </form>
-
-          {/* App Rating & Feedback Section */}
-          <div className="border-t border-border pt-4">
-            <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                  <span className="text-xs font-bold text-foreground">Officer App Feedback</span>
+                <label className="text-[11px] font-medium text-muted-foreground block mb-1">
+                  Unique Username (@username)
+                </label>
+                <div className="relative">
+                  <span className="text-xs font-mono text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2">@</span>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                    placeholder="officer_handle"
+                    className="w-full bg-card border border-border rounded-xl pl-7 pr-3 py-2 text-xs font-mono text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
+                    required
+                  />
                 </div>
-                <span className="text-[10px] text-muted-foreground font-mono">v1.0.0</span>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Rate your field experience with SummonsMitra or submit operational suggestions to judicial engineering.
-              </p>
-              <button
-                type="button"
-                id="review-my-app-btn"
-                onClick={() => setIsReviewModalOpen(true)}
-                className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
-              >
-                <Star className="w-3.5 h-3.5 fill-white" />
-                Review My App
-              </button>
-            </div>
-          </div>
 
-          {/* Logout Button */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground block mb-1">Badge Number</label>
+                  <input
+                    type="text"
+                    value={badgeNumber}
+                    onChange={(e) => setBadgeNumber(e.target.value)}
+                    className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground font-mono focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground block mb-1">Rank / Designation</label>
+                  <select
+                    value={rank}
+                    onChange={(e) => setRank(e.target.value)}
+                    className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
+                  >
+                    <option value="Sub-Inspector">Sub-Inspector</option>
+                    <option value="Inspector">Inspector</option>
+                    <option value="Head Constable">Head Constable</option>
+                    <option value="Constable">Constable</option>
+                    <option value="ACP / DSP">ACP / DSP</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground block mb-1">Police Station</label>
+                  <input
+                    type="text"
+                    value={policeStation}
+                    onChange={(e) => setPoliceStation(e.target.value)}
+                    className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium text-muted-foreground block mb-1">District / Jurisdiction</label>
+                  <input
+                    type="text"
+                    value={district}
+                    onChange={(e) => setDistrict(e.target.value)}
+                    className="w-full bg-card border border-border rounded-xl px-3 py-2 text-xs text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary-btn outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-5 py-2.5 bg-primary-btn text-white hover:bg-primary-hover font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+                >
+                  {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  <span>{isSaving ? 'Persisting to MongoDB...' : 'Save Profile Changes'}</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* TAB 3: Activity Trail */}
+          {activeTab === 'activities' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                  Audit History ({activities.length} Recorded Activities)
+                </span>
+                {isLoadingActivities && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              </div>
+
+              {activities.length === 0 ? (
+                <div className="p-6 text-center bg-card border border-border rounded-xl text-xs text-muted-foreground">
+                  <Activity className="w-6 h-6 mx-auto mb-2 text-muted-foreground/60" />
+                  <span>No recorded activities yet. Activities are logged when adding, editing, or serving summons.</span>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {activities.map((act) => (
+                    <div
+                      key={act.id || act._id}
+                      className="p-3 bg-card border border-border rounded-xl text-xs flex items-start gap-2.5 hover:border-border-strong transition-colors"
+                    >
+                      <div className="p-1.5 rounded-lg bg-muted text-primary-text shrink-0 mt-0.5">
+                        {act.activityType === 'SUMMON_CREATED' ? (
+                          <FileText className="w-3.5 h-3.5 text-blue-500" />
+                        ) : act.activityType === 'SUMMON_SERVED' ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                        ) : act.activityType === 'SUMMON_DELETED' ? (
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                        ) : act.activityType === 'PROFILE_UPDATED' ? (
+                          <User className="w-3.5 h-3.5 text-amber-500" />
+                        ) : (
+                          <Activity className="w-3.5 h-3.5 text-primary-text" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-foreground truncate">{act.title}</span>
+                          <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                            {formatDate(act.createdAt)}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-muted-foreground block mt-0.5">
+                          Type: {act.activityType}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Session Logout Action */}
           <div className="border-t border-border pt-4">
             <button
               type="button"
@@ -366,7 +632,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
             </button>
           </div>
         </div>
-          </div>
+      </div>
 
       {cropImageSrc && (
         <ImageCropperModal
@@ -374,7 +640,7 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
           onClose={() => setCropImageSrc(null)}
           imageSrc={cropImageSrc}
           onCropComplete={handleCropComplete}
-          aspectRatio={1} // Square for profile
+          aspectRatio={1}
         />
       )}
 

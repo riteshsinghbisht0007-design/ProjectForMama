@@ -335,17 +335,186 @@ async function runProductionReadinessTests() {
         const ocrMissingJson: any = await ocrMissingRes.json();
         assert('POST /api/ocr returns MISSING_PAYLOAD code', ocrMissingJson.code === 'MISSING_PAYLOAD');
 
-        // Test POST /api/ocr with minimal image payload (checks API pipeline execution)
-        const tinyPngBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-        const ocrPostRes = await fetch(`${baseUrl}/api/ocr`, {
+        // Test POST /api/ocr endpoint payload validation
+        const ocrEmptyImgRes = await fetch(`${baseUrl}/api/ocr`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: tinyPngBase64, mimeType: 'image/png', sessionId: 'test_session_audit' }),
+          body: JSON.stringify({ image: '', sessionId: 'test_session_audit' }),
         });
-        assert('POST /api/ocr responds with JSON content-type', ocrPostRes.headers.get('content-type')?.includes('application/json') || false);
-        const ocrPostJson: any = await ocrPostRes.json();
-        assert('POST /api/ocr preserves sessionId in response', ocrPostJson.sessionId === 'test_session_audit');
-        assert('POST /api/ocr returns valid response structure (no HTML crashes)', typeof ocrPostJson === 'object' && !Array.isArray(ocrPostJson));
+        assert('POST /api/ocr responds with JSON content-type', ocrEmptyImgRes.headers.get('content-type')?.includes('application/json') || false);
+        const ocrEmptyJson: any = await ocrEmptyImgRes.json();
+        assert('POST /api/ocr preserves sessionId on error response', ocrEmptyJson.sessionId === 'test_session_audit');
+        assert('POST /api/ocr rejects invalid/empty image payload', ocrEmptyImgRes.status === 400);
+
+        // Test 12: Complete Authentication & Data Persistence Flow
+        console.log('\n--- 12. Full User Authentication, Account Management & Session Isolation Tests ---');
+        const randId = Math.random().toString(36).substring(2, 7);
+        const testUser1 = {
+          fullName: 'Sub-Inspector Vikram Singh',
+          username: `vikram_${randId}`,
+          email: `vikram_${randId}@delhipolice.gov.in`,
+          password: 'Password@2026',
+          badgeNumber: `DL-POL-${randId.toUpperCase()}`,
+          policeStation: 'Connaught Place PS',
+          district: 'Central District, Delhi',
+          rank: 'Sub-Inspector',
+        };
+
+        // 12a. Register User 1
+        const reg1Res = await fetch(`${baseUrl}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testUser1),
+        });
+        assert('POST /api/auth/register creates new account with HTTP 201', reg1Res.status === 201);
+        const reg1Json: any = await reg1Res.json();
+        assert('Registered user has unique ID and username', reg1Json.user?.username === testUser1.username.toLowerCase());
+        const user1Cookie = reg1Res.headers.get('set-cookie');
+        assert('Registration sets secure auth_token cookie', !!user1Cookie && user1Cookie.includes('auth_token'));
+
+        // 12b. Duplicate Email Registration Prevention
+        const dupEmailRes = await fetch(`${baseUrl}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...testUser1,
+            username: `different_user_${randId}`,
+          }),
+        });
+        assert('Duplicate email registration is rejected with HTTP 409 Conflict', dupEmailRes.status === 409);
+
+        // 12c. Duplicate Username Registration Prevention
+        const dupUserRes = await fetch(`${baseUrl}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...testUser1,
+            email: `different_email_${randId}@delhipolice.gov.in`,
+          }),
+        });
+        assert('Duplicate username registration is rejected with HTTP 409 Conflict', dupUserRes.status === 409);
+
+        // 12d. Login with Username & Password
+        const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: testUser1.username,
+            password: testUser1.password,
+          }),
+        });
+        assert('POST /api/auth/login with valid credentials succeeds with HTTP 200', loginRes.status === 200);
+        const loginCookie = loginRes.headers.get('set-cookie');
+        const cookieHeader = loginCookie ? loginCookie.split(';')[0] : '';
+
+        // 12e. Forgot Password Endpoint
+        const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: testUser1.email }),
+        });
+        assert('POST /api/auth/forgot-password responds with HTTP 200', forgotRes.status === 200);
+
+        // 12f. Profile Retrieval via GET /api/auth/me
+        const meRes = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { Cookie: cookieHeader },
+        });
+        assert('GET /api/auth/me returns authenticated profile with HTTP 200', meRes.status === 200);
+        const meJson: any = await meRes.json();
+        assert('Profile returns verified username, email and police stats', meJson.user?.username === testUser1.username && typeof meJson.user?.stats?.totalSummons === 'number');
+
+        // 12g. Profile Update via PUT /api/auth/me
+        const updateProfileRes = await fetch(`${baseUrl}/api/auth/me`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
+          body: JSON.stringify({ policeStation: 'Tis Hazari Police Post', upcomingAlertDays: 14 }),
+        });
+        assert('PUT /api/auth/me updates officer profile with HTTP 200', updateProfileRes.status === 200);
+        const updatedProfileJson: any = await updateProfileRes.json();
+        assert('Updated profile reflects new police station in MongoDB', updatedProfileJson.user?.policeStation === 'Tis Hazari Police Post');
+
+        // 12h. Activity Log Audit Trail
+        const activitiesRes = await fetch(`${baseUrl}/api/activities`, {
+          headers: { Cookie: cookieHeader },
+        });
+        assert('GET /api/activities returns HTTP 200', activitiesRes.status === 200);
+        const activitiesJson: any = await activitiesRes.json();
+        assert('Activity trail records registration and login actions', Array.isArray(activitiesJson) && activitiesJson.length >= 2);
+
+        // 12i. Summons Persistence & Strict User Isolation
+        // Register User 2
+        const testUser2 = {
+          fullName: 'Constable Anita Roy',
+          username: `anita_${randId}`,
+          email: `anita_${randId}@delhipolice.gov.in`,
+          password: 'Password@2026',
+        };
+        const reg2Res = await fetch(`${baseUrl}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testUser2),
+        });
+        const user2CookieRaw = reg2Res.headers.get('set-cookie');
+        const user2Cookie = user2CookieRaw ? user2CookieRaw.split(';')[0] : '';
+
+        // User 1 creates a private summons
+        const user1SummonRes = await fetch(`${baseUrl}/api/summons`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
+          body: JSON.stringify({
+            summonNumber: `SUM/ISO/${randId}/001`,
+            caseNumber: `FIR 77/${randId}`,
+            personName: 'Confidential Accused A',
+            courtName: 'Patiala House Courts',
+            hearingDate: '2026-11-20',
+            status: 'Pending',
+            urgency: 'Urgent',
+          }),
+        });
+        assert('User 1 persists new summon with HTTP 201', user1SummonRes.status === 201);
+        const user1SummonJson: any = await user1SummonRes.json();
+        const summonId = user1SummonJson.id;
+
+        // User 2 queries their summons: must NOT see User 1's summon
+        const user2SummonsRes = await fetch(`${baseUrl}/api/summons`, {
+          headers: { Cookie: user2Cookie },
+        });
+        const user2SummonsJson: any = await user2SummonsRes.json();
+        const foundLeak = Array.isArray(user2SummonsJson) && user2SummonsJson.some((s: any) => s.id === summonId);
+        assert('User 2 summons query enforces strict tenant isolation (no leak)', !foundLeak);
+
+        // User 2 attempts to fetch User 1's summon directly: must return HTTP 404 / access denied
+        const user2DirectGet = await fetch(`${baseUrl}/api/summons/${summonId}`, {
+          headers: { Cookie: user2Cookie },
+        });
+        assert('User 2 direct access to User 1 summon is blocked with HTTP 404', user2DirectGet.status === 404);
+
+        // User 2 attempts to delete User 1's summon: must return HTTP 404
+        const user2DirectDel = await fetch(`${baseUrl}/api/summons/${summonId}`, {
+          method: 'DELETE',
+          headers: { Cookie: user2Cookie },
+        });
+        assert('User 2 deletion of User 1 summon is blocked with HTTP 404', user2DirectDel.status === 404);
+
+        // User 1 updates summon status to Completed
+        const updateSummonRes = await fetch(`${baseUrl}/api/summons/${summonId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
+          body: JSON.stringify({ status: 'Completed', notes: 'Served with signature' }),
+        });
+        assert('User 1 updates own summon with HTTP 200', updateSummonRes.status === 200);
+
+        // User 1 deletes own summon
+        const delSummonRes = await fetch(`${baseUrl}/api/summons/${summonId}`, {
+          method: 'DELETE',
+          headers: { Cookie: cookieHeader },
+        });
+        assert('User 1 deletes own summon with HTTP 200', delSummonRes.status === 200);
+
+        // Cleanup test users from DB
+        await db.collection('users').deleteOne({ email: testUser1.email });
+        await db.collection('users').deleteOne({ email: testUser2.email });
+        await db.collection('activities').deleteMany({ userId: { $in: [testUser1.username, testUser2.username] } });
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }

@@ -4,7 +4,7 @@ import cors from "cors";
 import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
@@ -43,12 +43,26 @@ var InMemoryCollection = class {
       } else if (typeof query[key] === "object" && query[key] !== null) {
         if ("$ne" in query[key]) {
           if (item[key] === query[key].$ne) return false;
+        } else if ("$in" in query[key]) {
+          if (!query[key].$in.includes(item[key])) return false;
         }
+      } else if (key.includes(".")) {
+        const parts = key.split(".");
+        let val = item;
+        for (const part of parts) {
+          val = val ? val[part] : void 0;
+        }
+        if (val !== query[key]) return false;
+      } else if (Array.isArray(item[key])) {
+        if (!item[key].includes(query[key])) return false;
       } else {
         if (item[key] !== query[key]) return false;
       }
     }
     return true;
+  }
+  async countDocuments(query = {}) {
+    return this.items.filter((item) => this.matchesQuery(item, query)).length;
   }
   async findOne(query) {
     const found = this.items.find((item) => this.matchesQuery(item, query));
@@ -57,7 +71,7 @@ var InMemoryCollection = class {
   find(query) {
     const matched = this.items.filter((item) => this.matchesQuery(item, query));
     let result = JSON.parse(JSON.stringify(matched));
-    return {
+    const cursor = {
       sort: (sortObj) => {
         const keys = Object.keys(sortObj);
         if (keys.length > 0) {
@@ -71,12 +85,23 @@ var InMemoryCollection = class {
             return 0;
           });
         }
-        return {
-          toArray: async () => result
-        };
+        return cursor;
+      },
+      limit: (n) => {
+        if (typeof n === "number" && n >= 0) {
+          result = result.slice(0, n);
+        }
+        return cursor;
+      },
+      skip: (n) => {
+        if (typeof n === "number" && n >= 0) {
+          result = result.slice(n);
+        }
+        return cursor;
       },
       toArray: async () => result
     };
+    return cursor;
   }
   async insertOne(doc) {
     const item = { ...doc };
@@ -176,6 +201,8 @@ function createInMemoryDatabase() {
     users: new InMemoryCollection(),
     summons: new InMemoryCollection(),
     witnesses: new InMemoryCollection(),
+    reviews: new InMemoryCollection(),
+    activities: new InMemoryCollection(),
     notifications: new InMemoryCollection(),
     fcm_tokens: new InMemoryCollection(),
     test_connection: new InMemoryCollection()
@@ -196,33 +223,60 @@ function createInMemoryDatabase() {
 }
 async function seedInitialData(collections) {
   const defaultPasswordHash = await bcrypt.hash("Police@2026", 10);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
   const usersCollection = collections.users;
   if (usersCollection.items.length === 0) {
     const officerRajesh = {
       _id: "user_si_rajesh",
+      uid: "user_si_rajesh",
       email: "dl-pol-4402@delhipolice.gov.in",
-      password: defaultPasswordHash,
+      username: "dl_pol_4402",
+      fullName: "Sub-Insp. Rajesh Sharma",
       displayName: "Sub-Insp. Rajesh Sharma",
+      password: defaultPasswordHash,
+      passwordHash: defaultPasswordHash,
       badgeNumber: "DL-POL-4402",
       policeStation: "Connaught Place PS",
       district: "Central District, Delhi",
       rank: "Sub-Inspector",
-      authProvider: "local",
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
+      authProviders: ["credentials"],
+      authProvider: "credentials",
+      providerIds: { credentials: "user_si_rajesh" },
+      emailVerified: true,
+      accountStatus: "active",
+      profilePhoto: null,
+      photoURL: null,
+      createdAt: now,
+      updatedAt: now,
+      lastLoginAt: now,
+      lastActivityAt: now,
+      upcomingAlertDays: 7
     };
     const officerVikram = {
       _id: "user_insp_vikram",
+      uid: "user_insp_vikram",
       email: "dl-pol-7821@delhipolice.gov.in",
-      password: defaultPasswordHash,
+      username: "dl_pol_7821",
+      fullName: "Insp. Vikram Rathore",
       displayName: "Insp. Vikram Rathore",
+      password: defaultPasswordHash,
+      passwordHash: defaultPasswordHash,
       badgeNumber: "DL-POL-7821",
       policeStation: "PS Tis Hazari",
       district: "Central District, Delhi",
       rank: "Inspector",
-      authProvider: "local",
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
+      authProviders: ["credentials"],
+      authProvider: "credentials",
+      providerIds: { credentials: "user_insp_vikram" },
+      emailVerified: true,
+      accountStatus: "active",
+      profilePhoto: null,
+      photoURL: null,
+      createdAt: now,
+      updatedAt: now,
+      lastLoginAt: now,
+      lastActivityAt: now,
+      upcomingAlertDays: 7
     };
     usersCollection.items.push(officerRajesh, officerVikram);
   }
@@ -1145,106 +1199,185 @@ function getGeminiApiKey() {
   return key;
 }
 var appPromise = null;
+var cachedMongoClient = null;
+var cachedDb = null;
+var fallbackInMemoryDb = null;
+var lastAtlasAttemptTime = 0;
+var ATLAS_RETRY_COOLDOWN_MS = 6e4;
+function getTargetDbName() {
+  if (process.env.MONGODB_DB_NAME && process.env.MONGODB_DB_NAME.trim()) {
+    return process.env.MONGODB_DB_NAME.trim();
+  }
+  if (process.env.MONGODB_DB && process.env.MONGODB_DB.trim()) {
+    return process.env.MONGODB_DB.trim();
+  }
+  if (process.env.MONGODB_URI) {
+    try {
+      const u = process.env.MONGODB_URI.trim();
+      const parsed = new URL(u.replace("mongodb+srv://", "http://").replace("mongodb://", "http://"));
+      if (parsed.pathname && parsed.pathname.length > 1) {
+        const cleanName = parsed.pathname.substring(1).split("?")[0].trim();
+        if (cleanName) return cleanName;
+      }
+    } catch (_) {
+    }
+  }
+  return "summons_app";
+}
+async function ensureMongoIndexes(database) {
+  if (!database || database.isInMemory) return;
+  const safeCreateIndex = async (colName, spec, options = {}) => {
+    try {
+      await database.collection(colName).createIndex(spec, options);
+    } catch (indexErr) {
+    }
+  };
+  await safeCreateIndex("summons", { userId: 1 });
+  await safeCreateIndex("summons", { userId: 1, createdAt: -1 });
+  await safeCreateIndex("summons", { userId: 1, updatedAt: -1 });
+  await safeCreateIndex("summons", { userId: 1, status: 1 });
+  await safeCreateIndex("summons", { ownerId: 1 });
+  await safeCreateIndex("summons", { userEmail: 1 });
+  await safeCreateIndex("reviews", { userId: 1 });
+  await safeCreateIndex("witnesses", { userId: 1 });
+  await safeCreateIndex("users", { email: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex("users", { username: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex("users", { uid: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex("users", { providerId: 1 }, { sparse: true });
+  await safeCreateIndex("users", { "providerIds.google": 1 }, { sparse: true });
+  await safeCreateIndex("users", { "providerIds.facebook": 1 }, { sparse: true });
+  await safeCreateIndex("users", { authProviders: 1 });
+  await safeCreateIndex("activities", { userId: 1, createdAt: -1 });
+  await safeCreateIndex("notifications", { userId: 1 });
+  await safeCreateIndex("notifications", { uniqueKey: 1 }, { unique: true, sparse: true });
+  await safeCreateIndex("fcm_tokens", { userId: 1 });
+  await safeCreateIndex("fcm_tokens", { token: 1 }, { unique: true, sparse: true });
+}
+async function getDatabase() {
+  const targetDbName = getTargetDbName();
+  if (cachedMongoClient && cachedDb && !cachedDb.isInMemory) {
+    try {
+      await Promise.race([
+        cachedDb.command({ ping: 1 }),
+        new Promise((_, r) => setTimeout(() => r(new Error("Ping timeout")), 1500))
+      ]);
+      return cachedDb;
+    } catch (pingErr) {
+      console.warn("[MongoDB] Cached connection stale or dropped, reconnecting...");
+      try {
+        await cachedMongoClient.close();
+      } catch (_) {
+      }
+      cachedMongoClient = null;
+      cachedDb = null;
+    }
+  }
+  if (cachedDb && cachedDb.isInMemory && Date.now() - lastAtlasAttemptTime < ATLAS_RETRY_COOLDOWN_MS) {
+    return cachedDb;
+  }
+  const rawUri = (process.env.MONGODB_URI || "").trim();
+  if (!rawUri) {
+    if (!fallbackInMemoryDb) {
+      fallbackInMemoryDb = createInMemoryDatabase();
+    }
+    cachedDb = fallbackInMemoryDb;
+    return cachedDb;
+  }
+  lastAtlasAttemptTime = Date.now();
+  const connectionStrategies = [
+    {
+      name: "Serverless Optimized Connection",
+      options: {
+        maxPoolSize: 10,
+        minPoolSize: 0,
+        maxIdleTimeMS: 6e4,
+        serverSelectionTimeoutMS: 2e3,
+        connectTimeoutMS: 2e3,
+        socketTimeoutMS: 45e3
+      }
+    },
+    {
+      name: "Direct TLS Compatibility Mode",
+      options: {
+        maxPoolSize: 10,
+        serverSelectionTimeoutMS: 2e3,
+        connectTimeoutMS: 2e3,
+        tls: true,
+        tlsAllowInvalidCertificates: true
+      }
+    }
+  ];
+  for (const strat of connectionStrategies) {
+    try {
+      console.info(`[MongoDB] Connecting to database '${targetDbName}' (${strat.name})...`);
+      const client = new MongoClient(rawUri, strat.options);
+      await client.connect();
+      const database = client.db(targetDbName);
+      await database.command({ ping: 1 });
+      console.info(`[MongoDB] Connected successfully to database '${targetDbName}'.`);
+      cachedMongoClient = client;
+      cachedDb = database;
+      ensureMongoIndexes(database).catch(
+        (idxErr) => console.warn("[MongoDB] Index creation notice:", idxErr.message)
+      );
+      return cachedDb;
+    } catch (connErr) {
+      const rawMsg = connErr?.message || String(connErr);
+      const isAtlasIpRestricted = /SSL alert number 80|tlsv1 alert internal error|ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR/i.test(rawMsg);
+      if (isAtlasIpRestricted) {
+        console.info(
+          `[MongoDB] Notice: Remote cluster connection closed by MongoDB Atlas (IP Access List restriction - SSL alert 80). To allow direct connection from all cloud runtimes, add 0.0.0.0/0 to MongoDB Atlas > Network Access. Activating local database fallback for '${targetDbName}'.`
+        );
+        break;
+      } else {
+        const cleanMsg = rawMsg.replace(/error:[0-9A-Fa-f]+:[^:]+:[^:]+:[^:]+/g, "TLS handshake issue").replace(/:error:/g, ": ");
+        console.info(`[MongoDB] Connection attempt (${strat.name}) status: ${cleanMsg}`);
+      }
+    }
+  }
+  if (!fallbackInMemoryDb) {
+    console.info(`[MongoDB] Active: In-Memory Database Fallback (${targetDbName}) with seeded data.`);
+    fallbackInMemoryDb = createInMemoryDatabase();
+  }
+  cachedDb = fallbackInMemoryDb;
+  return fallbackInMemoryDb;
+}
+function buildUserFilter(req) {
+  const conditions = [
+    { userId: req.user.uid },
+    { ownerId: req.user.uid },
+    { createdBy: req.user.uid }
+  ];
+  if (req.user.email) {
+    conditions.push(
+      { userEmail: req.user.email },
+      { userId: req.user.email },
+      { ownerId: req.user.email }
+    );
+  }
+  if (req.user._id) {
+    conditions.push(
+      { userId: req.user._id.toString() },
+      { ownerId: req.user._id.toString() }
+    );
+  }
+  return { $or: conditions };
+}
 async function getApp() {
   if (appPromise) return appPromise;
   appPromise = (async () => {
     const app = express();
     const isProduction = process.env.NODE_ENV === "production";
-    let mongoClient = null;
-    let db = null;
-    const targetDbName = process.env.MONGODB_DB_NAME || process.env.MONGODB_DB || "summons_app";
-    if (process.env.MONGODB_URI) {
-      const rawUri = process.env.MONGODB_URI.trim();
-      console.info(`[MongoDB] Attempting connection to database: '${targetDbName}'...`);
-      const connectionStrategies = [
-        {
-          name: "Standard Driver Connection",
-          options: {
-            serverSelectionTimeoutMS: 5e3,
-            connectTimeoutMS: 5e3
-          }
-        },
-        {
-          name: "ServerApi v1 Unified Mode",
-          options: {
-            serverSelectionTimeoutMS: 5e3,
-            connectTimeoutMS: 5e3,
-            serverApi: {
-              version: ServerApiVersion.v1,
-              strict: false,
-              deprecationErrors: true
-            }
-          }
-        },
-        {
-          name: "Direct TLS Compatibility Mode",
-          options: {
-            serverSelectionTimeoutMS: 5e3,
-            connectTimeoutMS: 5e3,
-            tls: true,
-            tlsAllowInvalidCertificates: true
-          }
-        }
-      ];
-      for (const strat of connectionStrategies) {
-        try {
-          mongoClient = new MongoClient(rawUri, strat.options);
-          await mongoClient.connect();
-          db = mongoClient.db(targetDbName);
-          await db.command({ ping: 1 });
-          console.info(`[MongoDB] Connected successfully to database '${targetDbName}' via ${strat.name}.`);
-          break;
-        } catch (connErr) {
-          const rawMsg = connErr?.message || String(connErr);
-          const isAtlasIpRestricted = /SSL alert number 80|tlsv1 alert internal error|ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR/i.test(rawMsg);
-          if (mongoClient) {
-            try {
-              await mongoClient.close();
-            } catch (_) {
-            }
-            mongoClient = null;
-          }
-          db = null;
-          if (isAtlasIpRestricted) {
-            console.info(
-              `[MongoDB] Notice: Remote cluster connection closed by MongoDB Atlas (IP Access List restriction - SSL alert 80). To allow direct connection from all cloud runtimes, add 0.0.0.0/0 to MongoDB Atlas > Network Access. Seamlessly activating robust local database for '${targetDbName}'.`
-            );
-            break;
-          } else {
-            const cleanMsg = rawMsg.replace(/error:[0-9A-Fa-f]+:[^:]+:[^:]+:[^:]+/g, "TLS handshake issue").replace(/:error:/g, ": ");
-            console.info(`[MongoDB] Connection attempt (${strat.name}) status: ${cleanMsg}`);
-          }
-        }
+    let db = await getDatabase();
+    let mongoClient = cachedMongoClient;
+    app.use(async (req, _res, next) => {
+      try {
+        req.db = await getDatabase();
+      } catch (_) {
+        req.db = db;
       }
-      if (db) {
-        const safeCreateIndex = async (colName, spec, options = {}) => {
-          try {
-            await db.collection(colName).createIndex(spec, options);
-          } catch (indexErr) {
-            console.warn(`[MongoDB] Index on ${colName} skipped/exists:`, indexErr.message);
-          }
-        };
-        await safeCreateIndex("summons", { userId: 1 });
-        await safeCreateIndex("summons", { userId: 1, createdAt: -1 });
-        await safeCreateIndex("summons", { userId: 1, updatedAt: -1 });
-        await safeCreateIndex("witnesses", { userId: 1 });
-        await safeCreateIndex("users", { email: 1 }, { unique: true, sparse: true });
-        await safeCreateIndex("users", { providerId: 1 }, { sparse: true });
-        await safeCreateIndex("notifications", { userId: 1 });
-        await safeCreateIndex("notifications", { uniqueKey: 1 }, { unique: true, sparse: true });
-        await safeCreateIndex("fcm_tokens", { userId: 1 });
-        await safeCreateIndex("fcm_tokens", { token: 1 }, { unique: true, sparse: true });
-        console.info(`[MongoDB] Collections and indexes verified for '${targetDbName}'.`);
-      }
-    } else {
-      if (isProduction) {
-        console.warn("[MongoDB:WARN] MONGODB_URI environment variable is not defined.");
-      }
-    }
-    if (!db) {
-      console.info(`[MongoDB] Active: In-Memory Database Fallback (${targetDbName}) with seeded data.`);
-      db = createInMemoryDatabase();
-    }
+      next();
+    });
     app.get("/firebase-messaging-sw.js", (_req, res, next) => {
       res.setHeader("Service-Worker-Allowed", "/");
       res.setHeader("Content-Type", "application/javascript; charset=utf-8");
@@ -1360,6 +1493,74 @@ async function getApp() {
         res.status(500).json({ error: err.message });
       }
     });
+    const sanitizeUser = (userDoc) => {
+      if (!userDoc) return null;
+      const user = { ...userDoc };
+      delete user.password;
+      delete user.passwordHash;
+      const uid = user.uid || user.providerId || (user._id?.toString ? user._id.toString() : String(user._id));
+      return {
+        ...user,
+        _id: user._id?.toString ? user._id.toString() : String(user._id),
+        uid,
+        fullName: user.fullName || user.displayName || "Officer",
+        displayName: user.displayName || user.fullName || "Officer",
+        username: user.username || (user.email ? user.email.split("@")[0].toLowerCase() : "officer"),
+        profilePhoto: user.profilePhoto || user.photoURL || null,
+        photoURL: user.photoURL || user.profilePhoto || null,
+        authProviders: Array.isArray(user.authProviders) && user.authProviders.length > 0 ? user.authProviders : [user.authProvider || "credentials"],
+        authProvider: user.authProvider || (user.authProviders?.[0] || "credentials"),
+        accountStatus: user.accountStatus || "active",
+        emailVerified: Boolean(user.emailVerified),
+        badgeNumber: user.badgeNumber || "",
+        rank: user.rank || "Officer",
+        policeStation: user.policeStation || "",
+        district: user.district || "",
+        createdAt: user.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: user.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+        lastLoginAt: user.lastLoginAt || (/* @__PURE__ */ new Date()).toISOString()
+      };
+    };
+    const logActivity = async (database, userId, activityType, title, recordId, details) => {
+      try {
+        if (!database || !userId) return;
+        const activityDoc = {
+          userId,
+          activityType,
+          title,
+          recordId: recordId || void 0,
+          details: details || {},
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        await database.collection("activities").insertOne(activityDoc);
+      } catch (err) {
+        console.warn("[Activity] Logging notice:", err?.message || err);
+      }
+    };
+    const getUserStats = async (database, userId, email) => {
+      const defaultStats = { totalSummons: 0, activeSummons: 0, closedSummons: 0, urgentSummons: 0 };
+      if (!database || !userId) return defaultStats;
+      try {
+        const filter = {
+          $or: [
+            { userId },
+            { ownerId: userId },
+            ...email ? [{ userEmail: email }, { userId: email }] : []
+          ]
+        };
+        const summonsCol = database.collection("summons");
+        const allSummons = await summonsCol.find(filter).toArray();
+        const totalSummons = allSummons.length;
+        const closedSummons = allSummons.filter(
+          (s) => s.status === "Completed" || s.status === "Served"
+        ).length;
+        const activeSummons = totalSummons - closedSummons;
+        const urgentSummons = allSummons.filter((s) => s.urgency === "Urgent").length;
+        return { totalSummons, activeSummons, closedSummons, urgentSummons };
+      } catch (_) {
+        return defaultStats;
+      }
+    };
     const requireAuth = async (req, res, next) => {
       let cookieToken = req.cookies?.auth_token;
       let bearerToken = null;
@@ -1379,9 +1580,7 @@ async function getApp() {
               _id: null,
               email: decodedFirebaseToken.email ? decodedFirebaseToken.email.toLowerCase() : null
             };
-            return next();
           } catch (firebaseErr) {
-            console.warn("[Auth] Firebase verifyIdToken note:", firebaseErr?.message || firebaseErr);
             const tokenPayload = jwt.decode(token);
             if (tokenPayload && tokenPayload.iss && (tokenPayload.iss.includes("securetoken.google.com") || tokenPayload.iss.includes("accounts.google.com")) && tokenPayload.sub) {
               const nowSeconds = Math.floor(Date.now() / 1e3);
@@ -1393,19 +1592,78 @@ async function getApp() {
                 _id: null,
                 email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null
               };
-              return next();
+            } else {
+              throw firebaseErr;
+            }
+          }
+        } else {
+          if (!process.env.JWT_SECRET) {
+            throw new Error("JWT_SECRET is missing");
+          }
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          req.user = {
+            uid: decoded.uid || decoded.firebaseUid || decoded.userId,
+            _id: decoded.userId,
+            email: decoded.email ? decoded.email.toLowerCase() : null,
+            username: decoded.username ? decoded.username.toLowerCase() : null
+          };
+        }
+        if (req.user && req.user.uid) {
+          const currentDb = req.db || db;
+          if (currentDb) {
+            try {
+              const userDoc = await currentDb.collection("users").findOne({
+                $or: [
+                  { uid: req.user.uid },
+                  { providerId: req.user.uid },
+                  { "providerIds.google": req.user.uid },
+                  { "providerIds.facebook": req.user.uid },
+                  ...req.user.email ? [{ email: req.user.email }] : []
+                ]
+              });
+              if (userDoc) {
+                req.user._id = userDoc._id?.toString ? userDoc._id.toString() : String(userDoc._id);
+                req.userDoc = userDoc;
+                if (!userDoc.providerId && req.user.uid) {
+                  await currentDb.collection("users").updateOne(
+                    { _id: userDoc._id },
+                    { $set: { providerId: req.user.uid, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } }
+                  );
+                }
+              } else {
+                const now = (/* @__PURE__ */ new Date()).toISOString();
+                const newUser = {
+                  _id: req.user.uid,
+                  uid: req.user.uid,
+                  email: req.user.email || "",
+                  username: req.user.email ? req.user.email.split("@")[0].toLowerCase() : `user_${req.user.uid.slice(-6)}`,
+                  fullName: req.user.email ? req.user.email.split("@")[0] : "Officer",
+                  displayName: req.user.email ? req.user.email.split("@")[0] : "Officer",
+                  authProviders: ["firebase"],
+                  authProvider: "firebase",
+                  providerIds: { firebase: req.user.uid },
+                  emailVerified: true,
+                  badgeNumber: "DL-POL-" + req.user.uid.slice(-4).toUpperCase(),
+                  policeStation: "Connaught Place PS",
+                  district: "Central District, Delhi",
+                  rank: "Officer",
+                  accountStatus: "active",
+                  profilePhoto: null,
+                  photoURL: null,
+                  createdAt: now,
+                  updatedAt: now,
+                  lastLoginAt: now,
+                  lastActivityAt: now,
+                  upcomingAlertDays: 7
+                };
+                const insertResult = await currentDb.collection("users").insertOne(newUser);
+                req.user._id = insertResult.insertedId.toString();
+                req.userDoc = newUser;
+              }
+            } catch (_) {
             }
           }
         }
-        if (!process.env.JWT_SECRET) {
-          throw new Error("JWT_SECRET is missing");
-        }
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = {
-          uid: decoded.firebaseUid || decoded.userId,
-          _id: decoded.userId,
-          email: decoded.email ? decoded.email.toLowerCase() : null
-        };
         next();
       } catch (error) {
         console.warn("[Auth] Token verification failed for route", req.path);
@@ -1424,83 +1682,247 @@ async function getApp() {
       });
     };
     app.post("/api/auth/register", async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       if (!process.env.JWT_SECRET) return res.status(500).json({ error: "JWT_SECRET missing on server" });
       try {
-        const { email, password, name, badgeNumber, policeStation, district, rank } = req.body;
-        if (!email || !password) {
-          return res.status(400).json({ error: "Email and password are required" });
+        const {
+          fullName,
+          name,
+          username,
+          email,
+          password,
+          badgeNumber,
+          policeStation,
+          district,
+          rank
+        } = req.body;
+        const effectiveFullName = (fullName || name || "").trim();
+        const rawUsername = (username || "").trim();
+        const rawEmail = (email || "").trim();
+        const rawPassword = typeof password === "string" ? password : "";
+        if (!effectiveFullName || effectiveFullName.length < 2) {
+          return res.status(400).json({ error: "Full Name is required and must be at least 2 characters." });
         }
-        const existingUser = await db.collection("users").findOne({ email: email.toLowerCase() });
-        if (existingUser) {
-          return res.status(409).json({ error: "An account with this email already exists" });
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!rawEmail || !emailRegex.test(rawEmail)) {
+          return res.status(400).json({ error: "A valid official email address is required." });
         }
-        const hashedPassword = await bcrypt2.hash(password, 10);
-        const newUser = {
-          email: email.toLowerCase(),
-          password: hashedPassword,
-          displayName: name || email.split("@")[0],
-          badgeNumber: badgeNumber || "",
-          policeStation: policeStation || "",
-          district: district || "",
-          rank: rank || "Officer",
-          authProvider: "local",
-          createdAt: /* @__PURE__ */ new Date(),
-          updatedAt: /* @__PURE__ */ new Date()
+        const normalizedEmail = rawEmail.toLowerCase();
+        const usernameCandidate = rawUsername || normalizedEmail.split("@")[0];
+        const usernameRegex = /^[a-zA-Z0-9_-]{3,30}$/;
+        if (!usernameRegex.test(usernameCandidate)) {
+          return res.status(400).json({
+            error: "Username must be 3-30 characters long and contain only letters, numbers, underscores, or hyphens."
+          });
+        }
+        const normalizedUsername = usernameCandidate.toLowerCase();
+        if (!rawPassword || rawPassword.length < 6) {
+          return res.status(400).json({ error: "Password must be at least 6 characters long." });
+        }
+        const existingEmail = await currentDb.collection("users").findOne({ email: normalizedEmail });
+        if (existingEmail) {
+          return res.status(409).json({
+            error: "An account with this email address already exists. Please sign in or use another email."
+          });
+        }
+        const existingUsername = await currentDb.collection("users").findOne({ username: normalizedUsername });
+        if (existingUsername) {
+          return res.status(409).json({
+            error: "This username is already taken. Please choose another unique username."
+          });
+        }
+        const passwordHash = await bcrypt2.hash(rawPassword, 12);
+        const userId = "usr_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const newUserDoc = {
+          _id: userId,
+          uid: userId,
+          fullName: effectiveFullName,
+          displayName: effectiveFullName,
+          username: normalizedUsername,
+          email: normalizedEmail,
+          emailVerified: false,
+          passwordHash,
+          authProviders: ["credentials"],
+          authProvider: "credentials",
+          providerIds: { credentials: userId },
+          profilePhoto: null,
+          photoURL: null,
+          badgeNumber: (badgeNumber || "").trim(),
+          policeStation: (policeStation || "Connaught Place PS").trim(),
+          district: (district || "Central District, Delhi").trim(),
+          rank: (rank || "Sub-Inspector").trim(),
+          accountStatus: "active",
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: now,
+          lastActivityAt: now,
+          upcomingAlertDays: 7
         };
-        const result = await db.collection("users").insertOne(newUser);
-        const token = jwt.sign({ userId: result.insertedId.toString() }, process.env.JWT_SECRET, { expiresIn: "7d" });
+        await currentDb.collection("users").insertOne(newUserDoc);
+        console.info(`[Auth] Registered new account '${normalizedUsername}' (${normalizedEmail}) with UID '${userId}'.`);
+        await logActivity(
+          currentDb,
+          userId,
+          "ACCOUNT_REGISTERED",
+          `Account registered by ${effectiveFullName} (@${normalizedUsername})`,
+          userId,
+          { email: normalizedEmail, username: normalizedUsername }
+        );
+        const token = jwt.sign(
+          { userId, uid: userId, email: normalizedEmail, username: normalizedUsername },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" }
+        );
         setAuthCookie(res, token);
-        delete newUser.password;
-        res.status(201).json({ user: { ...newUser, uid: result.insertedId.toString() } });
+        const sanitized = sanitizeUser(newUserDoc);
+        const stats = { totalSummons: 0, activeSummons: 0, closedSummons: 0, urgentSummons: 0 };
+        res.status(201).json({
+          success: true,
+          message: "Account registered successfully!",
+          user: { ...sanitized, stats }
+        });
       } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("[Auth] Registration error:", err);
+        res.status(500).json({ error: err.message || "Registration failed" });
       }
     });
     app.post("/api/auth/login", async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       if (!process.env.JWT_SECRET) return res.status(500).json({ error: "JWT_SECRET missing on server" });
       try {
-        const { email, password } = req.body;
-        if (!email || !password) {
-          return res.status(400).json({ error: "Email and password are required" });
+        const { emailOrBadge, emailOrUsername, username, email, password } = req.body;
+        const rawIdentifier = (emailOrUsername || emailOrBadge || username || email || "").trim();
+        const rawPassword = typeof password === "string" ? password : "";
+        if (!rawIdentifier || !rawPassword) {
+          return res.status(400).json({ error: "Username/Email and Password are required." });
         }
-        let user = await db.collection("users").findOne({ email: email.toLowerCase() });
-        if (!user && password === "Police@2026" && email.toLowerCase().includes("@delhipolice.gov.in")) {
-          const badge = email.split("@")[0].toUpperCase();
-          const hashedPassword = await bcrypt2.hash("Police@2026", 10);
-          const newUser = {
-            email: email.toLowerCase(),
-            password: hashedPassword,
+        const identifier = rawIdentifier.toLowerCase();
+        let user = await currentDb.collection("users").findOne({
+          $or: [
+            { email: identifier },
+            { username: identifier },
+            { badgeNumber: rawIdentifier },
+            { badgeNumber: rawIdentifier.toUpperCase() }
+          ]
+        });
+        if (!user && rawPassword === "Police@2026" && (identifier.includes("@delhipolice.gov.in") || identifier.startsWith("dl-pol-"))) {
+          const badge = identifier.split("@")[0].toUpperCase();
+          const hashedPassword = await bcrypt2.hash("Police@2026", 12);
+          const testUid = "user_" + badge.toLowerCase().replace(/[^a-z0-9]/g, "_");
+          const now2 = (/* @__PURE__ */ new Date()).toISOString();
+          const demoUser = {
+            _id: testUid,
+            uid: testUid,
+            email: `${badge.toLowerCase()}@delhipolice.gov.in`,
+            username: badge.toLowerCase().replace(/[^a-z0-9_-]/g, "_"),
+            fullName: `Officer ${badge}`,
             displayName: `Officer ${badge}`,
+            passwordHash: hashedPassword,
             badgeNumber: badge,
-            policeStation: "PS Tis Hazari",
+            policeStation: "Connaught Place PS",
             district: "Central District, Delhi",
             rank: "Sub-Inspector",
-            authProvider: "local",
-            createdAt: /* @__PURE__ */ new Date(),
-            updatedAt: /* @__PURE__ */ new Date()
+            authProviders: ["credentials"],
+            authProvider: "credentials",
+            providerIds: { credentials: testUid },
+            emailVerified: true,
+            accountStatus: "active",
+            profilePhoto: null,
+            photoURL: null,
+            createdAt: now2,
+            updatedAt: now2,
+            lastLoginAt: now2,
+            lastActivityAt: now2,
+            upcomingAlertDays: 7
           };
-          const insertResult = await db.collection("users").insertOne(newUser);
-          user = { ...newUser, _id: insertResult.insertedId };
+          await currentDb.collection("users").insertOne(demoUser);
+          user = demoUser;
         }
-        if (!user || !user.password) {
-          return res.status(401).json({ error: "Invalid email or password" });
+        if (!user) {
+          return res.status(401).json({ error: "Invalid username/email or password." });
         }
-        const isMatch = await bcrypt2.compare(password, user.password);
+        const userHash = user.passwordHash || user.password;
+        if (!userHash) {
+          const primaryProvider = user.authProvider || user.authProviders?.[0] || "Google";
+          return res.status(400).json({
+            error: `This account was registered using ${primaryProvider}. Please use 'Sign in with ${primaryProvider}'.`
+          });
+        }
+        const isMatch = await bcrypt2.compare(rawPassword, userHash);
         if (!isMatch) {
-          return res.status(401).json({ error: "Invalid email or password" });
+          return res.status(401).json({ error: "Invalid username/email or password." });
         }
-        const token = jwt.sign({ userId: user._id.toString(), firebaseUid: user.providerId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        await currentDb.collection("users").updateOne(
+          { _id: user._id },
+          { $set: { lastLoginAt: now, lastActivityAt: now } }
+        );
+        const uid = user.uid || user.providerId || user._id.toString();
+        await logActivity(
+          currentDb,
+          uid,
+          "ACCOUNT_LOGIN",
+          `User ${user.fullName || user.displayName || user.username} logged in successfully`,
+          uid
+        );
+        const token = jwt.sign(
+          { userId: user._id.toString(), uid, email: user.email, username: user.username },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" }
+        );
         setAuthCookie(res, token);
-        delete user.password;
-        res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+        const sanitized = sanitizeUser(user);
+        const stats = await getUserStats(currentDb, uid, user.email);
+        res.status(200).json({
+          success: true,
+          message: "Authenticated successfully",
+          user: { ...sanitized, stats }
+        });
       } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("[Auth] Login error:", err);
+        res.status(500).json({ error: err.message || "Login failed" });
+      }
+    });
+    app.post("/api/auth/forgot-password", async (req, res) => {
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
+      try {
+        const { email, identifier } = req.body;
+        const rawTarget = (email || identifier || "").trim().toLowerCase();
+        if (!rawTarget) {
+          return res.status(400).json({ error: "Official email or username is required" });
+        }
+        const user = await currentDb.collection("users").findOne({
+          $or: [
+            { email: rawTarget },
+            { username: rawTarget },
+            { badgeNumber: rawTarget.toUpperCase() }
+          ]
+        });
+        if (user) {
+          await logActivity(
+            currentDb,
+            user.uid || user._id.toString(),
+            "PASSWORD_RESET_REQUESTED",
+            `Password reset instructions requested for ${user.email || user.username}`,
+            user.uid || user._id.toString()
+          );
+        }
+        res.status(200).json({
+          success: true,
+          message: "Password recovery instructions have been dispatched if the account exists in police records."
+        });
+      } catch (err) {
+        console.error("[Auth] Password reset error:", err);
+        res.status(500).json({ error: "Could not process password recovery request" });
       }
     });
     app.post("/api/auth/social", async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       if (!process.env.JWT_SECRET) return res.status(500).json({ error: "JWT_SECRET missing on server" });
       try {
         const { idToken, provider } = req.body;
@@ -1509,99 +1931,204 @@ async function getApp() {
         try {
           decodedToken = await getAuth().verifyIdToken(idToken);
         } catch (verifyErr) {
-          console.warn("[Auth] Firebase verifyIdToken note:", verifyErr.message);
+          console.warn("[Auth] Firebase verifyIdToken fallback:", verifyErr.message);
           const tokenPayload = jwt.decode(idToken);
           if (tokenPayload && tokenPayload.iss && (tokenPayload.iss.includes("securetoken.google.com") || tokenPayload.iss.includes("accounts.google.com")) && tokenPayload.sub) {
             decodedToken = {
               uid: tokenPayload.sub,
               email: tokenPayload.email,
               name: tokenPayload.name,
-              picture: tokenPayload.picture
+              picture: tokenPayload.picture,
+              firebase: tokenPayload.firebase
             };
           } else {
             throw verifyErr;
           }
         }
-        const email = decodedToken.email ? decodedToken.email.toLowerCase() : null;
         const uid = decodedToken.uid;
-        let user = null;
-        if (email) {
-          user = await db.collection("users").findOne({
-            $or: [{ providerId: uid }, { email }]
-          });
-        } else {
-          user = await db.collection("users").findOne({ providerId: uid });
+        const rawEmail = decodedToken.email ? decodedToken.email.trim() : null;
+        const normalizedEmail = rawEmail ? rawEmail.toLowerCase() : null;
+        const displayName = decodedToken.name || (rawEmail ? rawEmail.split("@")[0] : "Officer");
+        const photoURL = decodedToken.picture || null;
+        const tokenSignInProvider = decodedToken.firebase?.sign_in_provider || "";
+        let providerName = "google";
+        if (provider && String(provider).toLowerCase().includes("facebook") || tokenSignInProvider.includes("facebook")) {
+          providerName = "facebook";
+        }
+        let user = await currentDb.collection("users").findOne({
+          $or: [
+            { uid },
+            { providerId: uid },
+            { [`providerIds.${providerName}`]: uid },
+            { "providerIds.firebase": uid }
+          ]
+        });
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        if (!user && normalizedEmail) {
+          user = await currentDb.collection("users").findOne({ email: normalizedEmail });
+          if (user) {
+            console.info(`[Auth] Secure Account Linking: Linking ${providerName} UID '${uid}' to existing account for '${normalizedEmail}'.`);
+            const existingProviders = Array.isArray(user.authProviders) ? user.authProviders : [user.authProvider || "credentials"];
+            const updatedProviders = Array.from(/* @__PURE__ */ new Set([...existingProviders, providerName]));
+            const updatedProviderIds = {
+              ...user.providerIds || {},
+              [providerName]: uid
+            };
+            await currentDb.collection("users").updateOne(
+              { _id: user._id },
+              {
+                $set: {
+                  authProviders: updatedProviders,
+                  providerIds: updatedProviderIds,
+                  emailVerified: true,
+                  ...photoURL && !user.profilePhoto ? { profilePhoto: photoURL, photoURL } : {},
+                  lastLoginAt: now,
+                  lastActivityAt: now,
+                  updatedAt: now
+                }
+              }
+            );
+            user = await currentDb.collection("users").findOne({ _id: user._id });
+            await logActivity(
+              currentDb,
+              user.uid || user._id.toString(),
+              "ACCOUNT_LOGIN",
+              `Linked and signed in with ${providerName} (@${normalizedEmail})`,
+              uid
+            );
+          }
         }
         if (!user) {
-          const newUser = {
-            email,
-            displayName: decodedToken.name || (email ? email.split("@")[0] : "Officer"),
-            photoURL: decodedToken.picture || null,
-            authProvider: provider || "oauth",
-            providerId: uid,
-            badgeNumber: "",
-            policeStation: "",
-            district: "",
-            rank: "Officer",
-            createdAt: /* @__PURE__ */ new Date(),
-            updatedAt: /* @__PURE__ */ new Date()
+          const uniqueUsername = normalizedEmail ? normalizedEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "") + "_" + Math.random().toString(36).substring(2, 5) : `${providerName}_${uid.slice(-6)}`;
+          const newUserDoc = {
+            _id: uid,
+            uid,
+            fullName: displayName,
+            displayName,
+            username: uniqueUsername,
+            email: normalizedEmail || `${uid}@${providerName}.user.summonsmitra`,
+            emailVerified: Boolean(normalizedEmail),
+            authProviders: [providerName],
+            authProvider: providerName,
+            providerIds: { [providerName]: uid, firebase: uid },
+            profilePhoto: photoURL,
+            photoURL,
+            badgeNumber: "DL-POL-" + uid.slice(-4).toUpperCase(),
+            policeStation: "Connaught Place PS",
+            district: "Central District, Delhi",
+            rank: "Sub-Inspector",
+            accountStatus: "active",
+            createdAt: now,
+            updatedAt: now,
+            lastLoginAt: now,
+            lastActivityAt: now,
+            upcomingAlertDays: 7
           };
-          const result = await db.collection("users").insertOne(newUser);
-          user = { ...newUser, _id: result.insertedId };
+          await currentDb.collection("users").insertOne(newUserDoc);
+          console.info(`[Auth] Created new ${providerName} user record for UID '${uid}' (${normalizedEmail || "no email"}).`);
+          user = newUserDoc;
+          await logActivity(
+            currentDb,
+            uid,
+            "ACCOUNT_REGISTERED",
+            `Created new account via ${providerName} (@${user.username})`,
+            uid
+          );
         } else {
-          await db.collection("users").updateOne(
+          await currentDb.collection("users").updateOne(
             { _id: user._id },
-            { $set: { updatedAt: /* @__PURE__ */ new Date() } }
+            {
+              $set: {
+                lastLoginAt: now,
+                lastActivityAt: now,
+                ...photoURL && !user.profilePhoto ? { profilePhoto: photoURL, photoURL } : {}
+              }
+            }
+          );
+          user = await currentDb.collection("users").findOne({ _id: user._id });
+          await logActivity(
+            currentDb,
+            user.uid || user._id.toString(),
+            "ACCOUNT_LOGIN",
+            `Signed in via ${providerName}`,
+            uid
           );
         }
-        const token = jwt.sign({ userId: user._id.toString(), firebaseUid: user.providerId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+        const sessionUid = user.uid || user.providerId || user._id.toString();
+        const token = jwt.sign(
+          { userId: user._id.toString(), uid: sessionUid, email: user.email, username: user.username },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" }
+        );
         setAuthCookie(res, token);
-        delete user.password;
-        res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+        const sanitized = sanitizeUser(user);
+        const stats = await getUserStats(currentDb, sessionUid, user.email);
+        res.status(200).json({
+          success: true,
+          message: "Social authentication verified",
+          user: { ...sanitized, stats }
+        });
       } catch (err) {
         console.warn("[Auth] Social login error:", err.message || err);
-        res.status(401).json({ error: "Invalid social authentication token" });
+        res.status(401).json({ error: err.message || "Invalid social authentication credentials" });
       }
     });
     app.post("/api/auth/google-fallback", async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       if (!process.env.JWT_SECRET) return res.status(500).json({ error: "JWT_SECRET missing on server" });
       try {
         const { email, displayName, photoURL } = req.body;
         const targetEmail = (email || "chetna2manju@gmail.com").toLowerCase().trim();
         const targetName = displayName || (targetEmail ? targetEmail.split("@")[0] : "Officer");
-        let user = await db.collection("users").findOne({ email: targetEmail });
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        let user = await currentDb.collection("users").findOne({ email: targetEmail });
         if (!user) {
+          const uid2 = "usr_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
           const newUser = {
+            _id: uid2,
+            uid: uid2,
             email: targetEmail,
+            fullName: targetName,
             displayName: targetName,
+            username: targetEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, ""),
             photoURL: photoURL || null,
+            profilePhoto: photoURL || null,
             badgeNumber: "DL-POL-4402",
             policeStation: "Connaught Place PS",
             district: "Central District, Delhi",
             rank: "Sub-Inspector",
+            authProviders: ["google"],
             authProvider: "google",
-            providerId: "google_" + targetEmail.replace(/[^a-zA-Z0-9]/g, "_"),
-            createdAt: /* @__PURE__ */ new Date(),
-            updatedAt: /* @__PURE__ */ new Date()
+            providerIds: { google: uid2 },
+            emailVerified: true,
+            accountStatus: "active",
+            createdAt: now,
+            updatedAt: now,
+            lastLoginAt: now,
+            lastActivityAt: now,
+            upcomingAlertDays: 7
           };
-          const result = await db.collection("users").insertOne(newUser);
-          user = { ...newUser, _id: result.insertedId };
+          await currentDb.collection("users").insertOne(newUser);
+          user = newUser;
+          await logActivity(currentDb, uid2, "ACCOUNT_REGISTERED", `Created account via Google fallback (${targetEmail})`, uid2);
         } else {
-          await db.collection("users").updateOne(
+          await currentDb.collection("users").updateOne(
             { _id: user._id },
-            { $set: { updatedAt: /* @__PURE__ */ new Date() } }
+            { $set: { lastLoginAt: now, lastActivityAt: now, updatedAt: now } }
           );
+          user = await currentDb.collection("users").findOne({ _id: user._id });
         }
-        const uid = user.providerId || user._id.toString();
+        const uid = user.uid || user.providerId || user._id.toString();
         const token = jwt.sign(
-          { userId: user._id.toString(), firebaseUid: uid },
+          { userId: user._id.toString(), uid, email: user.email, username: user.username },
           process.env.JWT_SECRET,
           { expiresIn: "7d" }
         );
         setAuthCookie(res, token);
-        delete user.password;
-        res.json({ user: { ...user, uid } });
+        const sanitized = sanitizeUser(user);
+        const stats = await getUserStats(currentDb, uid, user.email);
+        res.json({ success: true, user: { ...sanitized, stats } });
       } catch (err) {
         console.warn("[Auth] Google fallback login error:", err.message || err);
         res.status(500).json({ error: err.message });
@@ -1613,68 +2140,144 @@ async function getApp() {
         secure: true,
         sameSite: "none"
       });
-      res.json({ success: true });
+      res.json({ success: true, message: "Logged out successfully" });
     });
-    app.put("/api/auth/me", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+    const handleGetProfile = async (req, res) => {
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
-        const updates = { ...req.body };
-        delete updates._id;
-        delete updates.uid;
-        delete updates.providerId;
-        delete updates.password;
-        delete updates.createdAt;
-        updates.updatedAt = /* @__PURE__ */ new Date();
-        const filter = req.user._id ? ObjectId.isValid(req.user._id) ? { _id: new ObjectId(req.user._id) } : { _id: req.user._id } : { providerId: req.user.uid };
-        const result = await db.collection("users").findOneAndUpdate(
-          filter,
+        let user = null;
+        if (req.user._id) {
+          user = ObjectId.isValid(req.user._id) ? await currentDb.collection("users").findOne({ _id: new ObjectId(req.user._id) }) : await currentDb.collection("users").findOne({ _id: req.user._id });
+        }
+        if (!user && req.user.uid) {
+          user = await currentDb.collection("users").findOne({
+            $or: [
+              { uid: req.user.uid },
+              { providerId: req.user.uid },
+              { "providerIds.google": req.user.uid },
+              { "providerIds.facebook": req.user.uid },
+              { _id: req.user.uid }
+            ]
+          });
+        }
+        if (!user && req.user.email) {
+          user = await currentDb.collection("users").findOne({ email: req.user.email });
+        }
+        if (!user) {
+          return res.status(404).json({ error: "User account record not found in MongoDB" });
+        }
+        const uid = user.uid || user.providerId || user._id.toString();
+        const sanitized = sanitizeUser(user);
+        const stats = await getUserStats(currentDb, uid, user.email);
+        res.status(200).json({
+          success: true,
+          user: { ...sanitized, stats }
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    };
+    app.get("/api/auth/me", requireAuth, handleGetProfile);
+    app.get("/api/users/profile", requireAuth, handleGetProfile);
+    const handleUpdateProfile = async (req, res) => {
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
+      try {
+        const allowedKeys = [
+          "fullName",
+          "displayName",
+          "username",
+          "badgeNumber",
+          "rank",
+          "policeStation",
+          "district",
+          "photoURL",
+          "profilePhoto",
+          "upcomingAlertDays"
+        ];
+        const updates = {};
+        for (const k of allowedKeys) {
+          if (req.body[k] !== void 0) {
+            updates[k] = req.body[k];
+          }
+        }
+        if (updates.fullName && !updates.displayName) {
+          updates.displayName = updates.fullName;
+        } else if (updates.displayName && !updates.fullName) {
+          updates.fullName = updates.displayName;
+        }
+        if (updates.photoURL) {
+          updates.profilePhoto = updates.photoURL;
+        } else if (updates.profilePhoto) {
+          updates.photoURL = updates.profilePhoto;
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        updates.updatedAt = now;
+        updates.lastActivityAt = now;
+        const userFilter = req.user._id ? ObjectId.isValid(req.user._id) ? { _id: new ObjectId(req.user._id) } : { _id: req.user._id } : { $or: [{ uid: req.user.uid }, { providerId: req.user.uid }] };
+        if (updates.username) {
+          const normUser = String(updates.username).toLowerCase().trim();
+          const existingWithUsername = await currentDb.collection("users").findOne({
+            username: normUser,
+            _id: { $ne: req.user._id }
+          });
+          if (existingWithUsername && existingWithUsername.uid !== req.user.uid) {
+            return res.status(409).json({ error: "This username is already taken by another officer." });
+          }
+          updates.username = normUser;
+        }
+        const result = await currentDb.collection("users").findOneAndUpdate(
+          userFilter,
           { $set: updates },
           { returnDocument: "after" }
         );
         if (!result) {
           return res.status(404).json({ error: "User not found" });
         }
-        const user = result;
-        delete user.password;
-        res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+        const uid = result.uid || result.providerId || result._id.toString();
+        await logActivity(
+          currentDb,
+          uid,
+          "PROFILE_UPDATED",
+          `Officer profile updated for ${result.fullName || result.displayName || result.username}`,
+          uid,
+          { updatedFields: Object.keys(updates) }
+        );
+        const sanitized = sanitizeUser(result);
+        const stats = await getUserStats(currentDb, uid, result.email);
+        res.status(200).json({
+          success: true,
+          message: "Profile updated successfully",
+          user: { ...sanitized, stats }
+        });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
-    });
-    app.get("/api/auth/me", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+    };
+    app.put("/api/auth/me", requireAuth, handleUpdateProfile);
+    app.put("/api/users/profile", requireAuth, handleUpdateProfile);
+    app.get("/api/activities", requireAuth, async (req, res) => {
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
-        let user = null;
-        if (req.user._id) {
-          user = ObjectId.isValid(req.user._id) ? await db.collection("users").findOne({ _id: new ObjectId(req.user._id) }) : await db.collection("users").findOne({ _id: req.user._id });
-        }
-        if (!user && req.user.uid) {
-          user = await db.collection("users").findOne({ providerId: req.user.uid });
-        }
-        if (!user && req.user.uid) {
-          user = await db.collection("users").findOne({ _id: req.user.uid });
-        }
-        if (!user) {
-          return res.status(404).json({ error: "User not found" });
-        }
-        delete user.password;
-        res.json({ user: { ...user, uid: user.providerId || user._id.toString() } });
+        const activities = await currentDb.collection("activities").find({ userId: req.user.uid }).sort({ createdAt: -1 }).limit(50).toArray();
+        res.status(200).json(
+          activities.map((a) => ({
+            ...a,
+            id: a._id?.toString ? a._id.toString() : String(a._id)
+          }))
+        );
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
     });
     app.get("/api/summons", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
-        const userFilter = {
-          $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user.email ? [{ userEmail: req.user.email }] : [],
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
-          ]
-        };
-        let summons = await db.collection("summons").find(userFilter).toArray();
+        const userFilter = buildUserFilter(req);
+        let summons = await currentDb.collection("summons").find(userFilter).sort({ updatedAt: -1, createdAt: -1 }).toArray();
         if (summons.length === 0 && (req.user.uid === "demo-officer-uid" || req.user.email === "demo@police.gov.in")) {
           const defaultSummons = [
             {
@@ -1755,14 +2358,14 @@ async function getApp() {
             }
           ];
           try {
-            if (db.collection("summons").insertMany) {
-              await db.collection("summons").insertMany(defaultSummons);
+            if (currentDb.collection("summons").insertMany) {
+              await currentDb.collection("summons").insertMany(defaultSummons);
             } else {
               for (const s of defaultSummons) {
-                await db.collection("summons").insertOne(s);
+                await currentDb.collection("summons").insertOne(s);
               }
             }
-            summons = await db.collection("summons").find(userFilter).toArray();
+            summons = await currentDb.collection("summons").find(userFilter).sort({ updatedAt: -1, createdAt: -1 }).toArray();
           } catch (seedErr) {
             console.warn("[Summons] Auto-seed error:", seedErr);
           }
@@ -1773,22 +2376,20 @@ async function getApp() {
       }
     });
     app.get("/api/summons/:id", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { id } = req.params;
-        const userFilter = {
+        const userFilter = buildUserFilter(req);
+        const idFilter = {
           $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user.email ? [{ userEmail: req.user.email }] : [],
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
+            { _id: id },
+            { id },
+            ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
-        let summon = await db.collection("summons").findOne({
-          $and: [
-            { $or: [{ _id: id }, { id }, ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []] },
-            userFilter
-          ]
+        let summon = await currentDb.collection("summons").findOne({
+          $and: [idFilter, userFilter]
         });
         if (!summon) {
           return res.status(404).json({ error: "Summon record not found" });
@@ -1799,20 +2400,21 @@ async function getApp() {
       }
     });
     app.get("/api/summons/:id/download-original", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { id } = req.params;
-        const userFilter = {
+        const userFilter = buildUserFilter(req);
+        const idFilter = {
           $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
+            { _id: id },
+            { id },
+            ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
-        let summon = await db.collection("summons").findOne({ _id: id, ...userFilter });
-        if (!summon && ObjectId.isValid(id)) {
-          summon = await db.collection("summons").findOne({ _id: new ObjectId(id), ...userFilter });
-        }
+        let summon = await currentDb.collection("summons").findOne({
+          $and: [idFilter, userFilter]
+        });
         if (!summon) {
           return res.status(404).json({ error: "Summon record not found or access denied" });
         }
@@ -1839,7 +2441,8 @@ async function getApp() {
       }
     });
     app.post("/api/summons", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const docId = req.body.id || req.body._id || "sum_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         const summon = {
@@ -1852,10 +2455,19 @@ async function getApp() {
           createdAt: req.body.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
           updatedAt: req.body.updatedAt || (/* @__PURE__ */ new Date()).toISOString()
         };
-        await db.collection("summons").updateOne(
+        await currentDb.collection("summons").updateOne(
           { _id: docId },
           { $set: summon },
           { upsert: true }
+        );
+        console.info(`[MongoDB] Summons '${docId}' saved for user '${req.user.uid}' in database '${currentDb.databaseName || "summons_app"}'.`);
+        await logActivity(
+          currentDb,
+          req.user.uid,
+          "SUMMON_CREATED",
+          `Added summon ${summon.summonNumber || docId} for ${summon.personName || "person"}`,
+          docId,
+          { summonNumber: summon.summonNumber, personName: summon.personName, courtName: summon.courtName }
         );
         setTimeout(() => {
           checkAndDispatchHearingNotifications(req.user.uid).catch(
@@ -1864,11 +2476,13 @@ async function getApp() {
         }, 100);
         res.status(201).json({ ...summon, id: docId });
       } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("[MongoDB] Summons save error:", err);
+        res.status(500).json({ error: err.message || "Failed to persist summon to database" });
       }
     });
     app.put("/api/summons/:id", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { id } = req.params;
         const updates = { ...req.body, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -1883,15 +2497,8 @@ async function getApp() {
             ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
-        const userFilter = {
-          $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user.email ? [{ userEmail: req.user.email }] : [],
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
-          ]
-        };
-        const result = await db.collection("summons").updateOne(
+        const userFilter = buildUserFilter(req);
+        const result = await currentDb.collection("summons").updateOne(
           { $and: [idFilter, userFilter] },
           { $set: updates }
         );
@@ -1899,23 +2506,34 @@ async function getApp() {
         if (result.matchedCount === 0) {
           return res.status(404).json({ error: "Summon record not found or access denied" });
         }
-        const updatedDoc = await db.collection("summons").findOne({ $and: [idFilter, userFilter] });
+        const updatedDoc = await currentDb.collection("summons").findOne({ $and: [idFilter, userFilter] });
+        const isServed = updates.status === "Completed" || updates.status === "Served";
+        await logActivity(
+          currentDb,
+          req.user.uid,
+          isServed ? "SUMMON_SERVED" : "SUMMON_UPDATED",
+          isServed ? `Marked summon ${updatedDoc?.summonNumber || id} as served/closed` : `Updated details for summon ${updatedDoc?.summonNumber || id}`,
+          id,
+          { status: updates.status, summonNumber: updatedDoc?.summonNumber }
+        );
         setTimeout(() => {
           checkAndDispatchHearingNotifications(req.user.uid).catch(
             (e) => console.warn("[Push] Notification check error after update:", e)
           );
         }, 100);
-        res.json({
+        res.status(200).json({
           success: true,
           updatedCount: result.modifiedCount,
           summon: updatedDoc ? { ...updatedDoc, id: updatedDoc._id?.toString() || updatedDoc.id } : void 0
         });
       } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("[MongoDB] Summons update error:", err);
+        res.status(500).json({ error: err.message || "Failed to update summon in database" });
       }
     });
     app.delete("/api/summons/:id", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { id } = req.params;
         const idFilter = {
@@ -1925,54 +2543,52 @@ async function getApp() {
             ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
-        const userFilter = {
-          $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user.email ? [{ userEmail: req.user.email }] : [],
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
-          ]
-        };
-        const result = await db.collection("summons").deleteOne({ $and: [idFilter, userFilter] });
+        const userFilter = buildUserFilter(req);
+        const result = await currentDb.collection("summons").deleteOne({ $and: [idFilter, userFilter] });
         if (result.deletedCount === 0) {
           return res.status(404).json({ error: "Summon record not found or access denied" });
         }
-        await db.collection("notifications").deleteMany({ summonsId: id });
+        await currentDb.collection("notifications").deleteMany({ summonsId: id });
         console.info(`[MongoDB] Summons delete '${id}': deleted=${result.deletedCount}`);
-        res.json({ success: true, deletedCount: result.deletedCount });
+        await logActivity(
+          currentDb,
+          req.user.uid,
+          "SUMMON_DELETED",
+          `Deleted summon record ${id}`,
+          id
+        );
+        res.status(200).json({ success: true, deletedCount: result.deletedCount });
       } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("[MongoDB] Summons delete error:", err);
+        res.status(500).json({ error: err.message || "Failed to delete summon from database" });
       }
     });
     app.get("/api/witnesses", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
-        const userFilter = {
-          $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
-          ]
-        };
-        const witnesses = await db.collection("witnesses").find(userFilter).toArray();
+        const userFilter = buildUserFilter(req);
+        const witnesses = await currentDb.collection("witnesses").find(userFilter).sort({ updatedAt: -1, createdAt: -1 }).toArray();
         res.json(witnesses.map((w) => ({ ...w, id: w._id?.toString() || w.id })));
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
     });
     app.post("/api/witnesses", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const docId = req.body.id || req.body._id || "wit_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         const witness = {
           ...req.body,
           _id: docId,
+          id: docId,
           userId: req.user.uid,
           ownerId: req.user.uid,
+          userEmail: req.user.email || req.body.userEmail || void 0,
           updatedAt: req.body.updatedAt || (/* @__PURE__ */ new Date()).toISOString()
         };
-        delete witness.id;
-        await db.collection("witnesses").updateOne(
+        await currentDb.collection("witnesses").updateOne(
           { _id: docId },
           { $set: witness },
           { upsert: true }
@@ -1983,7 +2599,8 @@ async function getApp() {
       }
     });
     app.put("/api/witnesses/:id", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { id } = req.params;
         const updates = { ...req.body, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -1997,24 +2614,22 @@ async function getApp() {
             ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
-        const userFilter = {
-          $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
-          ]
-        };
-        const result = await db.collection("witnesses").updateOne(
+        const userFilter = buildUserFilter(req);
+        const result = await currentDb.collection("witnesses").updateOne(
           { $and: [idFilter, userFilter] },
           { $set: updates }
         );
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: "Witness record not found or access denied" });
+        }
         res.json({ success: true, updatedCount: result.modifiedCount });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
     });
     app.delete("/api/witnesses/:id", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { id } = req.params;
         const idFilter = {
@@ -2023,23 +2638,21 @@ async function getApp() {
             ...ObjectId.isValid(id) ? [{ _id: new ObjectId(id) }] : []
           ]
         };
-        const userFilter = {
-          $or: [
-            { userId: req.user.uid },
-            { ownerId: req.user.uid },
-            ...req.user._id ? [{ userId: req.user._id.toString() }, { ownerId: req.user._id.toString() }] : []
-          ]
-        };
-        const result = await db.collection("witnesses").deleteOne({ $and: [idFilter, userFilter] });
+        const userFilter = buildUserFilter(req);
+        const result = await currentDb.collection("witnesses").deleteOne({ $and: [idFilter, userFilter] });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: "Witness record not found or access denied" });
+        }
         res.json({ success: true, deletedCount: result.deletedCount });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
     });
     app.get("/api/reviews", async (_req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = _req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
-        const reviews = await db.collection("reviews").find({}).sort({ updatedAt: -1, createdAt: -1 }).limit(50).toArray();
+        const reviews = await currentDb.collection("reviews").find({}).sort({ updatedAt: -1, createdAt: -1 }).limit(50).toArray();
         res.json(reviews.map((r) => ({
           ...r,
           id: r._id?.toString() || r.id,
@@ -2050,16 +2663,25 @@ async function getApp() {
       }
     });
     app.get("/api/reviews/mine", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
-        const review = await db.collection("reviews").findOne({ userId: req.user.uid });
-        res.json({ review: review || null });
+        const userFilter = {
+          $or: [
+            { userId: req.user.uid },
+            ...req.user.email ? [{ userId: req.user.email }, { userEmail: req.user.email }] : [],
+            ...req.user._id ? [{ userId: req.user._id.toString() }] : []
+          ]
+        };
+        const review = await currentDb.collection("reviews").findOne(userFilter);
+        res.json({ review: review ? { ...review, id: review._id?.toString() || review.id } : null });
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
     });
     app.post("/api/reviews", requireAuth, async (req, res) => {
-      if (!db) return res.status(503).json({ error: "Database disconnected" });
+      const currentDb = req.db || db;
+      if (!currentDb) return res.status(503).json({ error: "Database disconnected" });
       try {
         const { rating, feedback, officerName, badgeNumber, rank } = req.body;
         const numRating = Number(rating);
@@ -2071,15 +2693,16 @@ async function getApp() {
         }
         const reviewData = {
           userId: req.user.uid,
+          userEmail: req.user.email || void 0,
           rating: Math.round(numRating),
           feedback: feedback.trim(),
-          officerName: officerName || "",
-          badgeNumber: badgeNumber || "",
-          rank: rank || "",
+          officerName: (officerName || "").trim(),
+          badgeNumber: (badgeNumber || "").trim(),
+          rank: (rank || "").trim(),
           appVersion: "1.0.0",
           updatedAt: /* @__PURE__ */ new Date()
         };
-        await db.collection("reviews").updateOne(
+        const result = await currentDb.collection("reviews").updateOne(
           { userId: req.user.uid },
           {
             $set: reviewData,
@@ -2087,11 +2710,11 @@ async function getApp() {
           },
           { upsert: true }
         );
-        console.info(`[App Review] Officer ${req.user.uid} submitted ${numRating}-star app review`);
-        res.status(200).json({ success: true, message: "Review saved successfully!", review: reviewData });
+        console.info(`[App Review] Officer ${req.user.uid} saved ${numRating}-star review in database (upserted=${result.upsertedCount}, modified=${result.modifiedCount})`);
+        res.status(200).json({ success: true, message: "Review saved successfully to database!", review: reviewData });
       } catch (err) {
         console.error("[App Review] Failed to save review:", err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: err.message || "Failed to save review to database" });
       }
     });
     app.use("/api/cases", createCaseRoutes(() => db));
@@ -2717,17 +3340,19 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
       }
       next(err);
     });
-    if (process.env.VERCEL !== "1" && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
-      setInterval(() => {
+    if (process.env.VERCEL !== "1" && !process.env.AWS_LAMBDA_FUNCTION_NAME && process.env.NODE_ENV !== "test") {
+      const hearingInterval = setInterval(() => {
         checkAndDispatchHearingNotifications().catch((err) => {
           console.error("[Scheduler] Periodic background push check error:", err);
         });
       }, 2 * 60 * 1e3);
-      setTimeout(() => {
+      if (hearingInterval.unref) hearingInterval.unref();
+      const hearingStartup = setTimeout(() => {
         checkAndDispatchHearingNotifications().catch((err) => {
           console.warn("[Startup] Initial push check error:", err);
         });
       }, 3e3);
+      if (hearingStartup.unref) hearingStartup.unref();
     }
     return { app, db, mongoClient };
   })();

@@ -19,9 +19,20 @@ export default async function handler(req: any, res: any) {
       req.url = forwardedUri;
     }
   } else if (req.url && req.url.includes('__path=')) {
-    const match = req.url.match(/[?&]__path=([^&]+)/);
-    if (match && match[1]) {
-      req.url = `/api/${decodeURIComponent(match[1])}`;
+    try {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const realPath = parsedUrl.searchParams.get('__path');
+      if (realPath) {
+        parsedUrl.searchParams.delete('__path');
+        const remainingQuery = parsedUrl.searchParams.toString();
+        const cleanPath = realPath.startsWith('/') ? realPath : `/${realPath}`;
+        req.url = `/api${cleanPath}${remainingQuery ? '?' + remainingQuery : ''}`;
+      }
+    } catch (_) {
+      const match = req.url.match(/[?&]__path=([^&]+)/);
+      if (match && match[1]) {
+        req.url = `/api/${decodeURIComponent(match[1])}`;
+      }
     }
   } else if (req.query?.slug) {
     const slugArr = Array.isArray(req.query.slug) ? req.query.slug : [req.query.slug];

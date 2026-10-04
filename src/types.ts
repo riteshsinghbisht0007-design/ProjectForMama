@@ -1,4 +1,4 @@
-export type SummonStatus = 'Pending' | 'Upcoming' | 'Completed';
+export type SummonStatus = 'Pending' | 'Upcoming' | 'Completed' | 'Served';
 export type SummonUrgency = 'Standard' | 'High' | 'Urgent';
 
 export type WitnessRole =
@@ -66,17 +66,52 @@ export interface Summon {
 
 export interface OfficerUser {
   uid: string;
+  _id?: string;
   email: string;
+  username?: string;
+  fullName?: string;
   displayName: string;
-  photoURL?: string;
+  photoURL?: string | null;
+  profilePhoto?: string | null;
   badgeNumber: string;
   policeStation: string;
   rank: string;
   district: string;
-  authProvider: 'google' | 'facebook' | 'password';
+  authProvider: 'google' | 'facebook' | 'credentials' | 'local' | 'password' | string;
+  authProviders?: string[];
+  providerIds?: Record<string, string>;
   upcomingAlertDays?: number;
+  emailVerified?: boolean;
+  accountStatus?: string;
   createdAt?: string;
   updatedAt?: string;
+  lastLoginAt?: string;
+  lastActivityAt?: string;
+  stats?: {
+    totalSummons: number;
+    activeSummons: number;
+    closedSummons: number;
+    urgentSummons: number;
+  };
+}
+
+export interface UserActivity {
+  id: string;
+  userId: string;
+  activityType:
+    | 'ACCOUNT_REGISTERED'
+    | 'ACCOUNT_LOGIN'
+    | 'SUMMON_CREATED'
+    | 'SUMMON_UPDATED'
+    | 'SUMMON_SERVED'
+    | 'SUMMON_DELETED'
+    | 'PROFILE_UPDATED'
+    | 'OCR_SCANNED'
+    | 'WITNESS_ADDED';
+  recordId?: string;
+  title: string;
+  details?: Record<string, any>;
+  createdAt: string;
 }
 
 export interface SummonFilter {

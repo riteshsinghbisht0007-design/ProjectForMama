@@ -31,12 +31,27 @@ export class InMemoryCollection {
       } else if (typeof query[key] === 'object' && query[key] !== null) {
         if ('$ne' in query[key]) {
           if (item[key] === query[key].$ne) return false;
+        } else if ('$in' in query[key]) {
+          if (!query[key].$in.includes(item[key])) return false;
         }
+      } else if (key.includes('.')) {
+        const parts = key.split('.');
+        let val = item;
+        for (const part of parts) {
+          val = val ? val[part] : undefined;
+        }
+        if (val !== query[key]) return false;
+      } else if (Array.isArray(item[key])) {
+        if (!item[key].includes(query[key])) return false;
       } else {
         if (item[key] !== query[key]) return false;
       }
     }
     return true;
+  }
+
+  async countDocuments(query: any = {}) {
+    return this.items.filter((item) => this.matchesQuery(item, query)).length;
   }
 
   async findOne(query: any) {
@@ -47,7 +62,7 @@ export class InMemoryCollection {
   find(query: any) {
     const matched = this.items.filter((item) => this.matchesQuery(item, query));
     let result = JSON.parse(JSON.stringify(matched));
-    return {
+    const cursor: any = {
       sort: (sortObj: any) => {
         const keys = Object.keys(sortObj);
         if (keys.length > 0) {
@@ -61,12 +76,23 @@ export class InMemoryCollection {
             return 0;
           });
         }
-        return {
-          toArray: async () => result,
-        };
+        return cursor;
+      },
+      limit: (n: number) => {
+        if (typeof n === 'number' && n >= 0) {
+          result = result.slice(0, n);
+        }
+        return cursor;
+      },
+      skip: (n: number) => {
+        if (typeof n === 'number' && n >= 0) {
+          result = result.slice(n);
+        }
+        return cursor;
       },
       toArray: async () => result,
     };
+    return cursor;
   }
 
   async insertOne(doc: any) {
@@ -177,6 +203,8 @@ export function createInMemoryDatabase() {
     users: new InMemoryCollection(),
     summons: new InMemoryCollection(),
     witnesses: new InMemoryCollection(),
+    reviews: new InMemoryCollection(),
+    activities: new InMemoryCollection(),
     notifications: new InMemoryCollection(),
     fcm_tokens: new InMemoryCollection(),
     test_connection: new InMemoryCollection(),
@@ -201,36 +229,63 @@ export function createInMemoryDatabase() {
 
 export async function seedInitialData(collections: Record<string, InMemoryCollection>) {
   const defaultPasswordHash = await bcrypt.hash('Police@2026', 10);
+  const now = new Date().toISOString();
 
   // 1. Officers
   const usersCollection = collections.users;
   if (usersCollection.items.length === 0) {
     const officerRajesh = {
       _id: 'user_si_rajesh',
+      uid: 'user_si_rajesh',
       email: 'dl-pol-4402@delhipolice.gov.in',
-      password: defaultPasswordHash,
+      username: 'dl_pol_4402',
+      fullName: 'Sub-Insp. Rajesh Sharma',
       displayName: 'Sub-Insp. Rajesh Sharma',
+      password: defaultPasswordHash,
+      passwordHash: defaultPasswordHash,
       badgeNumber: 'DL-POL-4402',
       policeStation: 'Connaught Place PS',
       district: 'Central District, Delhi',
       rank: 'Sub-Inspector',
-      authProvider: 'local',
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      authProviders: ['credentials'],
+      authProvider: 'credentials',
+      providerIds: { credentials: 'user_si_rajesh' },
+      emailVerified: true,
+      accountStatus: 'active',
+      profilePhoto: null,
+      photoURL: null,
+      createdAt: now,
+      updatedAt: now,
+      lastLoginAt: now,
+      lastActivityAt: now,
+      upcomingAlertDays: 7,
     };
 
     const officerVikram = {
       _id: 'user_insp_vikram',
+      uid: 'user_insp_vikram',
       email: 'dl-pol-7821@delhipolice.gov.in',
-      password: defaultPasswordHash,
+      username: 'dl_pol_7821',
+      fullName: 'Insp. Vikram Rathore',
       displayName: 'Insp. Vikram Rathore',
+      password: defaultPasswordHash,
+      passwordHash: defaultPasswordHash,
       badgeNumber: 'DL-POL-7821',
       policeStation: 'PS Tis Hazari',
       district: 'Central District, Delhi',
       rank: 'Inspector',
-      authProvider: 'local',
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      authProviders: ['credentials'],
+      authProvider: 'credentials',
+      providerIds: { credentials: 'user_insp_vikram' },
+      emailVerified: true,
+      accountStatus: 'active',
+      profilePhoto: null,
+      photoURL: null,
+      createdAt: now,
+      updatedAt: now,
+      lastLoginAt: now,
+      lastActivityAt: now,
+      upcomingAlertDays: 7,
     };
 
     usersCollection.items.push(officerRajesh, officerVikram);
