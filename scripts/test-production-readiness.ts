@@ -36,6 +36,18 @@ async function runProductionReadinessTests() {
   const logoPath = path.join(process.cwd(), 'public', 'summonsmitra-logo.svg');
   assert('Official SVG logo exists in public/', fs.existsSync(logoPath));
 
+  const faviconIcoPath = path.join(process.cwd(), 'public', 'favicon.ico');
+  assert('favicon.ico exists and has valid size', fs.existsSync(faviconIcoPath) && fs.statSync(faviconIcoPath).size > 100);
+
+  const fav16Path = path.join(process.cwd(), 'public', 'favicon-16x16.png');
+  assert('favicon-16x16.png exists', fs.existsSync(fav16Path));
+
+  const fav32Path = path.join(process.cwd(), 'public', 'favicon-32x32.png');
+  assert('favicon-32x32.png exists', fs.existsSync(fav32Path));
+
+  const appleTouchPath = path.join(process.cwd(), 'public', 'apple-touch-icon.png');
+  assert('apple-touch-icon.png exists', fs.existsSync(appleTouchPath));
+
   const swPath = path.join(process.cwd(), 'public', 'firebase-messaging-sw.js');
   assert('Firebase Messaging Service Worker exists in public/', fs.existsSync(swPath));
 

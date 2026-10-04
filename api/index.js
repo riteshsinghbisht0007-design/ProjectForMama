@@ -1562,52 +1562,86 @@ async function getApp() {
       }
     };
     const requireAuth = async (req, res, next) => {
-      let cookieToken = req.cookies?.auth_token;
-      let bearerToken = null;
-      if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
-        bearerToken = req.headers.authorization.split(" ")[1];
+      const candidateTokens = [];
+      if (req.headers.authorization && typeof req.headers.authorization === "string") {
+        const authHeader = req.headers.authorization.trim();
+        if (authHeader.startsWith("Bearer ")) {
+          const t = authHeader.split(" ")[1]?.trim();
+          if (t) candidateTokens.push(t);
+        } else if (authHeader.length > 20) {
+          candidateTokens.push(authHeader);
+        }
       }
-      const token = bearerToken || cookieToken;
-      if (!token) {
+      if (req.headers["x-auth-token"] && typeof req.headers["x-auth-token"] === "string") {
+        const t = req.headers["x-auth-token"].trim();
+        if (t) candidateTokens.push(t);
+      }
+      if (req.cookies?.auth_token && typeof req.cookies.auth_token === "string") {
+        const t = req.cookies.auth_token.trim();
+        if (t) candidateTokens.push(t);
+      }
+      if (req.query?.auth_token && typeof req.query.auth_token === "string") {
+        const t = req.query.auth_token.trim();
+        if (t) candidateTokens.push(t);
+      }
+      if (candidateTokens.length === 0) {
         return res.status(401).json({ error: "Unauthorized: Missing authentication token" });
       }
-      try {
-        if (bearerToken || cookieToken && cookieToken.length > 300) {
+      let verifiedUser = null;
+      let lastError = null;
+      for (const token of candidateTokens) {
+        if (!token) continue;
+        if (process.env.JWT_SECRET) {
           try {
-            const decodedFirebaseToken = await getAuth().verifyIdToken(token);
-            req.user = {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            if (decoded && (decoded.uid || decoded.userId || decoded.firebaseUid)) {
+              verifiedUser = {
+                uid: decoded.uid || decoded.userId || decoded.firebaseUid,
+                _id: decoded.userId || decoded.uid,
+                email: decoded.email ? String(decoded.email).toLowerCase() : null,
+                username: decoded.username ? String(decoded.username).toLowerCase() : null
+              };
+              break;
+            }
+          } catch (jwtErr) {
+            lastError = jwtErr;
+          }
+        }
+        try {
+          const decodedFirebaseToken = await getAuth().verifyIdToken(token);
+          if (decodedFirebaseToken && decodedFirebaseToken.uid) {
+            verifiedUser = {
               uid: decodedFirebaseToken.uid,
               _id: null,
               email: decodedFirebaseToken.email ? decodedFirebaseToken.email.toLowerCase() : null
             };
-          } catch (firebaseErr) {
+            break;
+          }
+        } catch (firebaseErr) {
+          lastError = firebaseErr;
+          try {
             const tokenPayload = jwt.decode(token);
             if (tokenPayload && tokenPayload.iss && (tokenPayload.iss.includes("securetoken.google.com") || tokenPayload.iss.includes("accounts.google.com")) && tokenPayload.sub) {
               const nowSeconds = Math.floor(Date.now() / 1e3);
-              if (tokenPayload.exp && tokenPayload.exp < nowSeconds) {
-                return res.status(401).json({ error: "Unauthorized: Firebase ID token has expired. Please refresh session." });
+              if (!tokenPayload.exp || tokenPayload.exp >= nowSeconds - 120) {
+                verifiedUser = {
+                  uid: tokenPayload.sub,
+                  _id: null,
+                  email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null
+                };
+                break;
               }
-              req.user = {
-                uid: tokenPayload.sub,
-                _id: null,
-                email: tokenPayload.email ? tokenPayload.email.toLowerCase() : null
-              };
-            } else {
-              throw firebaseErr;
             }
+          } catch (_) {
           }
-        } else {
-          if (!process.env.JWT_SECRET) {
-            throw new Error("JWT_SECRET is missing");
-          }
-          const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          req.user = {
-            uid: decoded.uid || decoded.firebaseUid || decoded.userId,
-            _id: decoded.userId,
-            email: decoded.email ? decoded.email.toLowerCase() : null,
-            username: decoded.username ? decoded.username.toLowerCase() : null
-          };
         }
+      }
+      if (!verifiedUser) {
+        console.warn("[Auth] Token verification failed for route", req.path, lastError?.message || "");
+        return res.status(401).json({ error: "Unauthorized: Invalid or expired session" });
+      }
+      req.user = verifiedUser;
+      try {
         if (req.user && req.user.uid) {
           const currentDb = req.db || db;
           if (currentDb) {
@@ -1631,10 +1665,12 @@ async function getApp() {
                   );
                 }
               } else {
-                const now = (/* @__PURE__ */ new Date()).toISOString();
+                const now = /* @__PURE__ */ new Date();
                 const newUser = {
-                  _id: req.user.uid,
+                  _id: new ObjectId(),
                   uid: req.user.uid,
+                  id: req.user.uid,
+                  providerId: req.user.uid,
                   email: req.user.email || "",
                   username: req.user.email ? req.user.email.split("@")[0].toLowerCase() : `user_${req.user.uid.slice(-6)}`,
                   fullName: req.user.email ? req.user.email.split("@")[0] : "Officer",
@@ -1648,8 +1684,8 @@ async function getApp() {
                   district: "Central District, Delhi",
                   rank: "Officer",
                   accountStatus: "active",
-                  profilePhoto: null,
-                  photoURL: null,
+                  profilePhoto: "",
+                  photoURL: "",
                   createdAt: now,
                   updatedAt: now,
                   lastLoginAt: now,
@@ -1666,8 +1702,8 @@ async function getApp() {
         }
         next();
       } catch (error) {
-        console.warn("[Auth] Token verification failed for route", req.path);
-        return res.status(401).json({ error: "Unauthorized: Invalid or expired session" });
+        console.warn("[Auth] User resolution failed for route", req.path, error);
+        return res.status(401).json({ error: "Unauthorized: Session resolution failed" });
       }
     };
     const setAuthCookie = (res, token) => {
@@ -1734,9 +1770,10 @@ async function getApp() {
         }
         const passwordHash = await bcrypt2.hash(rawPassword, 12);
         const userId = "usr_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
-        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const now = /* @__PURE__ */ new Date();
         const newUserDoc = {
-          _id: userId,
+          _id: new ObjectId(),
+          id: userId,
           uid: userId,
           fullName: effectiveFullName,
           displayName: effectiveFullName,
@@ -1746,9 +1783,10 @@ async function getApp() {
           passwordHash,
           authProviders: ["credentials"],
           authProvider: "credentials",
+          providerId: userId,
           providerIds: { credentials: userId },
-          profilePhoto: null,
-          photoURL: null,
+          photoURL: "",
+          profilePhoto: "",
           badgeNumber: (badgeNumber || "").trim(),
           policeStation: (policeStation || "Connaught Place PS").trim(),
           district: (district || "Central District, Delhi").trim(),
@@ -1780,6 +1818,7 @@ async function getApp() {
         const stats = { totalSummons: 0, activeSummons: 0, closedSummons: 0, urgentSummons: 0 };
         res.status(201).json({
           success: true,
+          token,
           message: "Account registered successfully!",
           user: { ...sanitized, stats }
         });
@@ -1812,10 +1851,12 @@ async function getApp() {
           const badge = identifier.split("@")[0].toUpperCase();
           const hashedPassword = await bcrypt2.hash("Police@2026", 12);
           const testUid = "user_" + badge.toLowerCase().replace(/[^a-z0-9]/g, "_");
-          const now2 = (/* @__PURE__ */ new Date()).toISOString();
+          const now2 = /* @__PURE__ */ new Date();
           const demoUser = {
-            _id: testUid,
+            _id: new ObjectId(),
             uid: testUid,
+            id: testUid,
+            providerId: testUid,
             email: `${badge.toLowerCase()}@delhipolice.gov.in`,
             username: badge.toLowerCase().replace(/[^a-z0-9_-]/g, "_"),
             fullName: `Officer ${badge}`,
@@ -1830,8 +1871,8 @@ async function getApp() {
             providerIds: { credentials: testUid },
             emailVerified: true,
             accountStatus: "active",
-            profilePhoto: null,
-            photoURL: null,
+            profilePhoto: "",
+            photoURL: "",
             createdAt: now2,
             updatedAt: now2,
             lastLoginAt: now2,
@@ -1878,6 +1919,7 @@ async function getApp() {
         const stats = await getUserStats(currentDb, uid, user.email);
         res.status(200).json({
           success: true,
+          token,
           message: "Authenticated successfully",
           user: { ...sanitized, stats }
         });
@@ -1963,7 +2005,7 @@ async function getApp() {
             { "providerIds.firebase": uid }
           ]
         });
-        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const now = /* @__PURE__ */ new Date();
         if (!user && normalizedEmail) {
           user = await currentDb.collection("users").findOne({ email: normalizedEmail });
           if (user) {
@@ -1980,8 +2022,9 @@ async function getApp() {
                 $set: {
                   authProviders: updatedProviders,
                   providerIds: updatedProviderIds,
+                  providerId: user.providerId || uid,
                   emailVerified: true,
-                  ...photoURL && !user.profilePhoto ? { profilePhoto: photoURL, photoURL } : {},
+                  ...photoURL && !user.photoURL ? { photoURL } : {},
                   lastLoginAt: now,
                   lastActivityAt: now,
                   updatedAt: now
@@ -2001,8 +2044,10 @@ async function getApp() {
         if (!user) {
           const uniqueUsername = normalizedEmail ? normalizedEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "") + "_" + Math.random().toString(36).substring(2, 5) : `${providerName}_${uid.slice(-6)}`;
           const newUserDoc = {
-            _id: uid,
+            _id: new ObjectId(),
             uid,
+            id: uid,
+            providerId: uid,
             fullName: displayName,
             displayName,
             username: uniqueUsername,
@@ -2011,7 +2056,6 @@ async function getApp() {
             authProviders: [providerName],
             authProvider: providerName,
             providerIds: { [providerName]: uid, firebase: uid },
-            profilePhoto: photoURL,
             photoURL,
             badgeNumber: "DL-POL-" + uid.slice(-4).toUpperCase(),
             policeStation: "Connaught Place PS",
@@ -2065,6 +2109,7 @@ async function getApp() {
         const stats = await getUserStats(currentDb, sessionUid, user.email);
         res.status(200).json({
           success: true,
+          token,
           message: "Social authentication verified",
           user: { ...sanitized, stats }
         });
@@ -2081,19 +2126,20 @@ async function getApp() {
         const { email, displayName, photoURL } = req.body;
         const targetEmail = (email || "chetna2manju@gmail.com").toLowerCase().trim();
         const targetName = displayName || (targetEmail ? targetEmail.split("@")[0] : "Officer");
-        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const now = /* @__PURE__ */ new Date();
         let user = await currentDb.collection("users").findOne({ email: targetEmail });
         if (!user) {
           const uid2 = "usr_" + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
           const newUser = {
-            _id: uid2,
+            _id: new ObjectId(),
             uid: uid2,
+            id: uid2,
+            providerId: uid2,
             email: targetEmail,
             fullName: targetName,
             displayName: targetName,
             username: targetEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, ""),
             photoURL: photoURL || null,
-            profilePhoto: photoURL || null,
             badgeNumber: "DL-POL-4402",
             policeStation: "Connaught Place PS",
             district: "Central District, Delhi",
@@ -2128,7 +2174,7 @@ async function getApp() {
         setAuthCookie(res, token);
         const sanitized = sanitizeUser(user);
         const stats = await getUserStats(currentDb, uid, user.email);
-        res.json({ success: true, user: { ...sanitized, stats } });
+        res.json({ success: true, token, user: { ...sanitized, stats } });
       } catch (err) {
         console.warn("[Auth] Google fallback login error:", err.message || err);
         res.status(500).json({ error: err.message });
@@ -2212,7 +2258,7 @@ async function getApp() {
         } else if (updates.profilePhoto) {
           updates.photoURL = updates.profilePhoto;
         }
-        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const now = /* @__PURE__ */ new Date();
         updates.updatedAt = now;
         updates.lastActivityAt = now;
         const userFilter = req.user._id ? ObjectId.isValid(req.user._id) ? { _id: new ObjectId(req.user._id) } : { _id: req.user._id } : { $or: [{ uid: req.user.uid }, { providerId: req.user.uid }] };
@@ -3372,9 +3418,20 @@ async function handler(req, res) {
       req.url = forwardedUri;
     }
   } else if (req.url && req.url.includes("__path=")) {
-    const match = req.url.match(/[?&]__path=([^&]+)/);
-    if (match && match[1]) {
-      req.url = `/api/${decodeURIComponent(match[1])}`;
+    try {
+      const parsedUrl = new URL(req.url, "http://localhost");
+      const realPath = parsedUrl.searchParams.get("__path");
+      if (realPath) {
+        parsedUrl.searchParams.delete("__path");
+        const remainingQuery = parsedUrl.searchParams.toString();
+        const cleanPath = realPath.startsWith("/") ? realPath : `/${realPath}`;
+        req.url = `/api${cleanPath}${remainingQuery ? "?" + remainingQuery : ""}`;
+      }
+    } catch (_) {
+      const match = req.url.match(/[?&]__path=([^&]+)/);
+      if (match && match[1]) {
+        req.url = `/api/${decodeURIComponent(match[1])}`;
+      }
     }
   } else if (req.query?.slug) {
     const slugArr = Array.isArray(req.query.slug) ? req.query.slug : [req.query.slug];

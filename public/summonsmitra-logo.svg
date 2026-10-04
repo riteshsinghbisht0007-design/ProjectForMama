@@ -1,43 +1,127 @@
-<svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="shieldBorderGrad" x1="15" y1="10" x2="105" y2="110" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stopColor="#38BDF8" />
-      <stop offset="40%" stopColor="#0284C7" />
-      <stop offset="100%" stopColor="#0369A1" />
+    <!-- Background rounded squircle gradient -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#081026" />
+      <stop offset="50%" stop-color="#060C1D" />
+      <stop offset="100%" stop-color="#030712" />
     </linearGradient>
-    <linearGradient id="shieldFillGrad" x1="60" y1="12" x2="60" y2="108" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stopColor="#0B1A3A" />
-      <stop offset="50%" stopColor="#08142D" />
-      <stop offset="100%" stopColor="#040A1A" />
+
+    <!-- Center radial glow behind the shield -->
+    <radialGradient id="centerGlow" cx="50%" cy="45%" r="48%">
+      <stop offset="0%" stop-color="#0284C7" stop-opacity="0.45" />
+      <stop offset="50%" stop-color="#0369A1" stop-opacity="0.2" />
+      <stop offset="100%" stop-color="#081026" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Outer shield border gradient -->
+    <linearGradient id="shieldBorder" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="25%" stop-color="#00F0FF" />
+      <stop offset="70%" stop-color="#0284C7" />
+      <stop offset="100%" stop-color="#0369A1" />
     </linearGradient>
-    <linearGradient id="shieldCyanAccent" x1="20" y1="15" x2="100" y2="90" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stopColor="#00F5FF" />
-      <stop offset="50%" stopColor="#0EA5E9" />
-      <stop offset="100%" stopColor="#0284C7" />
+
+    <!-- Shield 3D Bevel - Left half (lighter navy) -->
+    <linearGradient id="shieldLeft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0E2248" />
+      <stop offset="100%" stop-color="#142F60" />
     </linearGradient>
-    <linearGradient id="courtWhiteGrad" x1="60" y1="40" x2="60" y2="92" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stopColor="#FFFFFF" />
-      <stop offset="70%" stopColor="#E0F2FE" />
-      <stop offset="100%" stopColor="#BAE6FD" />
+
+    <!-- Shield 3D Bevel - Right half (darker navy) -->
+    <linearGradient id="shieldRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#091836" />
+      <stop offset="100%" stop-color="#050E20" />
     </linearGradient>
-    <linearGradient id="docGrad" x1="75" y1="28" x2="102" y2="60" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stopColor="#38BDF8" />
-      <stop offset="100%" stopColor="#0284C7" />
+
+    <!-- Inner Shield Cyan Accent Line -->
+    <linearGradient id="innerCyan" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00F5FF" />
+      <stop offset="60%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <!-- Document folded corner gradient -->
+    <linearGradient id="docFold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00F0FF" />
+      <stop offset="100%" stop-color="#0284C7" />
     </linearGradient>
   </defs>
-  <path d="M60 12 L98 26 C98 58 84 86 60 106 C36 86 22 58 22 26 L60 12 Z" fill="url(#shieldFillGrad)" stroke="url(#shieldBorderGrad)" stroke-width="3.5" stroke-linejoin="round" />
-  <path d="M60 19 L91 30.5 C91 56 79 79 60 97 C41 79 29 56 29 30.5 L60 19 Z" fill="none" stroke="url(#shieldCyanAccent)" stroke-width="1.8" stroke-opacity="0.85" stroke-linejoin="round" />
-  <path d="M78 28 L94 28 C95.5 28 97 29.5 97 31 L97 48 L87 38 L78 38 Z" fill="url(#docGrad)" opacity="0.8" />
-  <path d="M87 28 L87 38 L97 38" fill="none" stroke="#BAE6FD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M60 41 L39 53 L81 53 Z" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.75" stroke-linejoin="round" />
-  <circle cx="60" cy="48" r="2.2" fill="#0369A1" />
-  <rect x="37" y="54" width="46" height="3.5" rx="1" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
-  <rect x="41.5" y="58.5" width="7" height="23" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
-  <rect x="56.5" y="58.5" width="7" height="23" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
-  <rect x="71.5" y="58.5" width="7" height="23" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
-  <line x1="45" y1="60" x2="45" y2="80" stroke="#0284C7" stroke-width="0.75" opacity="0.6" />
-  <line x1="60" y1="60" x2="60" y2="80" stroke="#0284C7" stroke-width="0.75" opacity="0.6" />
-  <line x1="75" y1="60" x2="75" y2="80" stroke="#0284C7" stroke-width="0.75" opacity="0.6" />
-  <rect x="35" y="82.5" width="50" height="3.5" rx="1" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
-  <rect x="32" y="86.5" width="56" height="4" rx="1.5" fill="url(#courtWhiteGrad)" stroke="#0284C7" stroke-width="0.5" />
+
+  <!-- App Icon Background: Dark Rounded Squircle -->
+  <rect x="8" y="8" width="496" height="496" rx="108" fill="url(#bgGrad)" stroke="#1E293B" stroke-width="2" />
+  <circle cx="256" cy="240" r="210" fill="url(#centerGlow)" />
+
+  <!-- Shield Left Half -->
+  <path d="M 256,66 
+           C 220,90 148,118 108,136 
+           C 108,260 156,368 256,438 
+           Z" 
+        fill="url(#shieldLeft)" />
+
+  <!-- Shield Right Half -->
+  <path d="M 256,66 
+           C 292,90 364,118 404,136 
+           C 404,260 356,368 256,438 
+           Z" 
+        fill="url(#shieldRight)" />
+
+  <!-- Shield Outer Glowing Border -->
+  <path d="M 256,66 
+           C 220,90 148,118 108,136 
+           C 108,260 156,368 256,438 
+           C 356,368 404,260 404,136 
+           C 364,118 292,90 256,66 
+           Z" 
+        fill="none" 
+        stroke="url(#shieldBorder)" 
+        stroke-width="14" 
+        stroke-linejoin="round" 
+        stroke-linecap="round" />
+
+  <!-- Inner Cyan Accent Line -->
+  <path d="M 256,88 
+           C 226,108 162,134 128,148 
+           C 128,252 170,344 256,412 
+           C 342,344 384,252 384,148 
+           C 350,134 286,108 256,88 
+           Z" 
+        fill="none" 
+        stroke="url(#innerCyan)" 
+        stroke-width="5" 
+        stroke-linejoin="round" 
+        stroke-opacity="0.9" />
+
+  <!-- Legal Document (Behind Courthouse) -->
+  <path d="M 218,154 
+           L 322,154 
+           L 364,196 
+           L 364,342 
+           C 364,348 358,354 352,354 
+           L 218,354 
+           C 212,354 206,348 206,342 
+           L 206,166 
+           C 206,160 212,154 218,154 
+           Z" 
+        fill="#081734" 
+        fill-opacity="0.65" 
+        stroke="#00F0FF" 
+        stroke-width="6" 
+        stroke-linejoin="round" />
+
+  <!-- Folded Dog-Ear Corner -->
+  <path d="M 322,154 L 322,196 L 364,196 Z" 
+        fill="url(#docFold)" 
+        stroke="#00F0FF" 
+        stroke-width="4" 
+        stroke-linejoin="round" />
+
+  <!-- Courthouse Emblem (Pure White) -->
+  <polygon points="256,164 160,224 352,224" fill="#FFFFFF" />
+  <rect x="156" y="228" width="200" height="18" rx="3" fill="#FFFFFF" />
+  <rect x="174" y="252" width="34" height="96" rx="4" fill="#FFFFFF" />
+  <rect x="239" y="252" width="34" height="96" rx="4" fill="#FFFFFF" />
+  <rect x="304" y="252" width="34" height="96" rx="4" fill="#FFFFFF" />
+  <rect x="156" y="354" width="200" height="18" rx="3" fill="#FFFFFF" />
+  <rect x="144" y="376" width="224" height="18" rx="4" fill="#FFFFFF" />
 </svg>

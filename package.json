@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.0.6",
     "@types/bcryptjs": "^3.0.0",
     "@types/cookie-parser": "^1.4.10",

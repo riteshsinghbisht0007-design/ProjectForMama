@@ -700,10 +700,12 @@ export async function getApp() {
                 );
               }
             } else {
-              const now = new Date().toISOString();
-              const newUser = {
-                _id: req.user.uid,
+              const now = new Date();
+              const newUser: any = {
+                _id: new ObjectId(),
                 uid: req.user.uid,
+                id: req.user.uid,
+                providerId: req.user.uid,
                 email: req.user.email || '',
                 username: req.user.email ? req.user.email.split('@')[0].toLowerCase() : `user_${req.user.uid.slice(-6)}`,
                 fullName: req.user.email ? req.user.email.split('@')[0] : 'Officer',
@@ -717,8 +719,8 @@ export async function getApp() {
                 district: 'Central District, Delhi',
                 rank: 'Officer',
                 accountStatus: 'active',
-                profilePhoto: null,
-                photoURL: null,
+                profilePhoto: '',
+                photoURL: '',
                 createdAt: now,
                 updatedAt: now,
                 lastLoginAt: now,
@@ -822,10 +824,11 @@ export async function getApp() {
       const passwordHash = await bcrypt.hash(rawPassword, 12);
 
       const userId = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
-      const now = new Date().toISOString();
+      const now = new Date();
 
-      const newUserDoc = {
-        _id: userId,
+      const newUserDoc: any = {
+        _id: new ObjectId(),
+        id: userId,
         uid: userId,
         fullName: effectiveFullName,
         displayName: effectiveFullName,
@@ -835,9 +838,10 @@ export async function getApp() {
         passwordHash,
         authProviders: ['credentials'],
         authProvider: 'credentials',
+        providerId: userId,
         providerIds: { credentials: userId },
-        profilePhoto: null,
-        photoURL: null,
+        photoURL: '',
+        profilePhoto: '',
         badgeNumber: (badgeNumber || '').trim(),
         policeStation: (policeStation || 'Connaught Place PS').trim(),
         district: (district || 'Central District, Delhi').trim(),
@@ -916,10 +920,12 @@ export async function getApp() {
         const badge = identifier.split('@')[0].toUpperCase();
         const hashedPassword = await bcrypt.hash('Police@2026', 12);
         const testUid = 'user_' + badge.toLowerCase().replace(/[^a-z0-9]/g, '_');
-        const now = new Date().toISOString();
-        const demoUser = {
-          _id: testUid,
+        const now = new Date();
+        const demoUser: any = {
+          _id: new ObjectId(),
           uid: testUid,
+          id: testUid,
+          providerId: testUid,
           email: `${badge.toLowerCase()}@delhipolice.gov.in`,
           username: badge.toLowerCase().replace(/[^a-z0-9_-]/g, '_'),
           fullName: `Officer ${badge}`,
@@ -934,8 +940,8 @@ export async function getApp() {
           providerIds: { credentials: testUid },
           emailVerified: true,
           accountStatus: 'active',
-          profilePhoto: null,
-          photoURL: null,
+          profilePhoto: '',
+          photoURL: '',
           createdAt: now,
           updatedAt: now,
           lastLoginAt: now,
@@ -1104,7 +1110,7 @@ export async function getApp() {
         ],
       });
 
-      const now = new Date().toISOString();
+      const now = new Date();
 
       // Step 2: Account Linking if user exists by verified email
       if (!user && normalizedEmail) {
@@ -1127,8 +1133,9 @@ export async function getApp() {
               $set: {
                 authProviders: updatedProviders,
                 providerIds: updatedProviderIds,
+                providerId: user.providerId || uid,
                 emailVerified: true,
-                ...(photoURL && !user.profilePhoto ? { profilePhoto: photoURL, photoURL } : {}),
+                ...(photoURL && !user.photoURL ? { photoURL } : {}),
                 lastLoginAt: now,
                 lastActivityAt: now,
                 updatedAt: now,
@@ -1153,9 +1160,11 @@ export async function getApp() {
           ? normalizedEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, '') + '_' + Math.random().toString(36).substring(2, 5)
           : `${providerName}_${uid.slice(-6)}`;
 
-        const newUserDoc = {
-          _id: uid,
+        const newUserDoc: any = {
+          _id: new ObjectId(),
           uid: uid,
+          id: uid,
+          providerId: uid,
           fullName: displayName,
           displayName: displayName,
           username: uniqueUsername,
@@ -1164,7 +1173,6 @@ export async function getApp() {
           authProviders: [providerName],
           authProvider: providerName,
           providerIds: { [providerName]: uid, firebase: uid },
-          profilePhoto: photoURL,
           photoURL: photoURL,
           badgeNumber: 'DL-POL-' + uid.slice(-4).toUpperCase(),
           policeStation: 'Connaught Place PS',
@@ -1244,20 +1252,21 @@ export async function getApp() {
       const { email, displayName, photoURL } = req.body;
       const targetEmail = (email || 'chetna2manju@gmail.com').toLowerCase().trim();
       const targetName = displayName || (targetEmail ? targetEmail.split('@')[0] : 'Officer');
-      const now = new Date().toISOString();
+      const now = new Date();
 
       let user = await currentDb.collection('users').findOne({ email: targetEmail });
       if (!user) {
         const uid = 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
-        const newUser = {
-          _id: uid,
+        const newUser: any = {
+          _id: new ObjectId(),
           uid: uid,
+          id: uid,
+          providerId: uid,
           email: targetEmail,
           fullName: targetName,
           displayName: targetName,
           username: targetEmail.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]/g, ''),
           photoURL: photoURL || null,
-          profilePhoto: photoURL || null,
           badgeNumber: 'DL-POL-4402',
           policeStation: 'Connaught Place PS',
           district: 'Central District, Delhi',
@@ -1397,7 +1406,7 @@ export async function getApp() {
         updates.photoURL = updates.profilePhoto;
       }
 
-      const now = new Date().toISOString();
+      const now = new Date();
       updates.updatedAt = now;
       updates.lastActivityAt = now;
 
