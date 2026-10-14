@@ -98,35 +98,47 @@ export async function requestPushPermissionAndSubscribe(): Promise<{
       return { success: false, error: 'Notification permission was not granted.' };
     }
 
-    const registration = await registerPushServiceWorker();
-    if (!registration) {
-      return { success: false, error: 'Failed to initialize background service worker.' };
-    }
+    await registerPushServiceWorker();
+    // Wait until service worker is active with safe timeout
+    const readyRegistration = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<ServiceWorkerRegistration | null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
 
-    // Wait until service worker is active
-    if (!registration.active) {
-      await new Promise<void>((resolve) => {
-        const checkActive = () => {
-          if (registration.active) {
-            resolve();
-          } else {
-            setTimeout(checkActive, 100);
-          }
-        };
-        checkActive();
-      });
+    const registration = readyRegistration || (await navigator.serviceWorker.getRegistration('/')) || (await registerPushServiceWorker());
+    if (!registration) {
+      return { success: false, error: 'Background service worker could not be activated.' };
     }
 
     const vapidKey = await fetchVapidPublicKey();
 
-    // Subscribe to browser PushManager
-    let subscription = await registration.pushManager.getSubscription();
-    if (!subscription && vapidKey) {
-      const convertedKey = urlBase64ToUint8Array(vapidKey);
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: convertedKey as any,
-      });
+    // Subscribe to browser PushManager with clean renewal support
+    let subscription = await registration.pushManager.getSubscription().catch(() => null);
+    if (vapidKey) {
+      if (!subscription) {
+        try {
+          const convertedKey = urlBase64ToUint8Array(vapidKey);
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: convertedKey as any,
+          });
+        } catch (subErr: any) {
+          console.warn('[Push] Direct subscribe failed, attempting clean renewal:', subErr);
+          try {
+            const oldSub = await registration.pushManager.getSubscription().catch(() => null);
+            if (oldSub) {
+              await oldSub.unsubscribe().catch(() => {});
+            }
+            const convertedKey = urlBase64ToUint8Array(vapidKey);
+            subscription = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: convertedKey as any,
+            });
+          } catch (retryErr) {
+            console.warn('[Push] PushManager subscribe renewal error:', retryErr);
+          }
+        }
+      }
     }
 
     // Also attempt Firebase Messaging token if configured
@@ -149,11 +161,19 @@ export async function requestPushPermissionAndSubscribe(): Promise<{
     const tokenIdentifier = fcmToken || (subscription ? subscription.endpoint : undefined);
 
     if (!tokenIdentifier && !subscription) {
-      return { success: false, error: 'Failed to generate device push credentials.' };
+      return { success: false, error: 'Could not generate push subscription credentials. Please verify browser notification settings.' };
     }
 
-    // Register with backend
+    // Register with backend using stored bearer token and credentials
     const authHeaders = await getAuthHeader();
+    const token = typeof window !== 'undefined'
+      ? localStorage.getItem('sm_auth_token') || sessionStorage.getItem('sm_auth_token')
+      : null;
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+      authHeaders['x-auth-token'] = token;
+    }
+
     const response = await fetch('/api/notifications/fcm-token', {
       method: 'POST',
       credentials: 'include',

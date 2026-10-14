@@ -164,8 +164,8 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
     if (!file) return;
     setAvatarError(null);
 
-    if (file.size > 5 * 1024 * 1024) {
-      setAvatarError('Image is too large. Please select an image under 5MB.');
+    if (file.size > 10 * 1024 * 1024) {
+      setAvatarError('Image is too large. Please select an image under 10MB.');
       return;
     }
 
@@ -181,12 +181,19 @@ export const OfficerProfileModal: React.FC<OfficerProfileModalProps> = ({
     setCropImageSrc(null);
     setAvatarError(null);
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const base64 = reader.result as string;
       setPhotoURL(base64);
-      updateOfficerProfile({ photoURL: base64, profilePhoto: base64 }).catch((err) => {
-        setAvatarError('Failed to save profile picture: ' + err.message);
-      });
+      try {
+        setIsSaving(true);
+        await updateOfficerProfile({ photoURL: base64, profilePhoto: base64 });
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2500);
+      } catch (err: any) {
+        setAvatarError('Failed to save profile picture: ' + (err.message || 'Server error'));
+      } finally {
+        setIsSaving(false);
+      }
     };
     reader.readAsDataURL(croppedBlob);
   };

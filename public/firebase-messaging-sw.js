@@ -153,11 +153,42 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Install and activate service worker immediately
+const SW_VERSION = 'summonsmitra-v3';
+
+// 4. Handle client messages (e.g. SKIP_WAITING for updates)
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Install and activate service worker immediately with client control
 self.addEventListener('install', (_event) => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(clients.claim());
+  event.waitUntil(
+    Promise.all([
+      self.clients.claim(),
+      // Purge any obsolete caches to prevent stale bundles in installed PWA
+      caches.keys().then((keys) => {
+        return Promise.all(
+          keys
+            .filter((key) => key !== SW_VERSION)
+            .map((key) => {
+              console.info('[SW] Purging obsolete cache:', key);
+              return caches.delete(key);
+            })
+        );
+      }),
+    ]).then(() => {
+      // Notify all connected clients that the fresh service worker is active
+      return self.clients.matchAll({ type: 'window' }).then((windowClients) => {
+        windowClients.forEach((client) => {
+          client.postMessage({ type: 'SW_ACTIVATED', version: SW_VERSION });
+        });
+      });
+    })
+  );
 });

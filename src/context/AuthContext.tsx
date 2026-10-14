@@ -42,6 +42,10 @@ interface AuthContextType {
     username?: string
   ) => Promise<boolean>;
   resetPassword: (email: string) => Promise<boolean>;
+  resetPasswordWithNewCredentials: (
+    identifier: string,
+    newPassword: string
+  ) => Promise<{ success: boolean; message?: string; error?: string }>;
   logout: () => Promise<void>;
   updateOfficerProfile: (updates: Partial<OfficerUser>) => Promise<void>;
   clearAuthError: () => void;
@@ -162,7 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let isMounted = true;
 
-    // Handle OAuth redirect result if returning from a mobile redirect (Google or Facebook)
+    // Handle OAuth redirect result if returning from a redirect (Google or Facebook)
     if (!redirectProcessedRef.current) {
       redirectProcessedRef.current = true;
       getRedirectResult(auth)
@@ -175,16 +179,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const providerName = providerId.includes('facebook') ? 'facebook' : 'google';
             const idToken = await redirectResult.user.getIdToken();
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 3500);
-            await fetch('/api/auth/social', {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ idToken, provider: providerName }),
-              signal: controller.signal,
-            })
-              .catch(() => {})
-              .finally(() => clearTimeout(timer));
+            const timer = setTimeout(() => controller.abort(), 6000);
+            try {
+              const res = await fetch('/api/auth/social', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ idToken, provider: providerName }),
+                signal: controller.signal,
+              });
+              if (res.ok) {
+                const resData = await res.json().catch(() => null);
+                if (resData?.token) {
+                  saveSessionToken(resData.token);
+                }
+                if (resData?.user && isMounted) {
+                  setCurrentUser(resData.user);
+                  setAuthError(null);
+                }
+              }
+            } catch (backendErr) {
+              console.warn('[Auth] Redirect session sync notice:', backendErr);
+            } finally {
+              clearTimeout(timer);
+              sessionStorage.removeItem('sm_oauth_redirect_pending');
+            }
           }
         })
         .catch((redirectErr: any) => {
@@ -249,13 +268,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsLoading(false);
           }
         }
-      } else {
         // When Firebase user is null, verify if an active Department ID / server JWT session exists
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2000);
+          const timer = setTimeout(() => controller.abort(), 2500);
+          const token =
+            typeof window !== 'undefined'
+              ? localStorage.getItem('sm_auth_token') || sessionStorage.getItem('sm_auth_token')
+              : null;
+          const meHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (token) {
+            meHeaders['Authorization'] = `Bearer ${token}`;
+            meHeaders['x-auth-token'] = token;
+          }
           const meRes = await fetch('/api/auth/me', {
             credentials: 'include',
+            headers: meHeaders,
             signal: controller.signal,
           })
             .catch(() => null)
@@ -305,6 +335,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(errData.error || 'Google login failed on server');
       }
       const data = await response.json();
+      if (data.token) {
+        saveSessionToken(data.token);
+      }
       setCurrentUser(data.user);
     } catch (err: any) {
       console.warn('[Auth] Google login fallback error:', err.message || err);
@@ -324,7 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * - Never silently auto-logs into a hardcoded or fallback account (Requirements 1 & 2)
    */
   const loginWithGoogle = async (): Promise<void> => {
-    // Prevent multiple simultaneous OAuth requests (Requirement 11)
+    // Prevent multiple simultaneous OAuth requests
     if (isOAuthInProgressRef.current) {
       console.warn('[Auth] Google OAuth request already in progress. Ignoring repeated click.');
       return;
@@ -335,53 +368,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
 
     try {
-      // 1. Check whether an existing Firebase auth session is present and sign out (Requirements 2, 7, 8, 9)
-      // This guarantees Firebase client does not reuse any active account and forces Google account chooser
-      if (auth.currentUser) {
-        try {
-          await firebaseSignOut(auth);
-        } catch (signOutErr) {
-          console.warn('[Auth] Pre-login signOut notice:', signOutErr);
-        }
-      }
-
-      // 2. Configure a fresh GoogleAuthProvider with prompt: "select_account" (Requirements 3 & 4)
+      // Configure fresh GoogleAuthProvider with explicit account selection
       const provider = createGoogleAuthProvider();
 
-      // 3. Detect mobile device to use redirect flow for optimal account picker UX (Requirement 10)
-      const isMobile =
-        typeof navigator !== 'undefined' &&
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isStandalone =
+        typeof window !== 'undefined' &&
+        (window.matchMedia('(display-mode: standalone)').matches ||
+          (navigator as any).standalone === true ||
+          document.referrer.includes('android-app://'));
 
       let userCredential = null;
 
-      if (isMobile) {
-        console.info('[Auth] Initiating Google Sign-In via redirect on mobile with prompt: select_account');
-        await signInWithRedirect(auth, provider);
-        return; // Navigation will redirect to accounts.google.com chooser
-      }
-
-      // On desktop, launch popup
+      // Always attempt signInWithPopup first.
+      // In installed PWAs (Android WebAPK, iOS WebClip) and desktop,
+      // signInWithPopup prevents full window navigations and prevents infinite reload loops.
       try {
-        console.info('[Auth] Initiating Google Sign-In via popup with prompt: select_account');
+        console.info('[Auth] Initiating Google Sign-In with prompt: select_account');
         userCredential = await signInWithPopup(auth, provider);
       } catch (popupErr: any) {
         const popupCode = (popupErr.code || '').toLowerCase();
         const popupMsg = (popupErr.message || '').toLowerCase();
 
-        // If popup was blocked by browser or unsupported, seamlessly fall back to redirect flow (Requirement 10)
+        // If user cancelled or dismissed the popup
         if (
-          popupCode.includes('popup-blocked') ||
-          popupMsg.includes('popup-blocked') ||
-          popupCode.includes('operation-not-supported')
+          popupCode.includes('popup-closed-by-user') ||
+          popupMsg.includes('popup-closed-by-user') ||
+          popupMsg.includes('closed by user')
         ) {
-          console.warn('[Auth] Popup blocked or unsupported. Falling back to signInWithRedirect...');
-          await signInWithRedirect(auth, provider);
-          return;
-        }
-
-        // If user explicitly closed the popup
-        if (popupCode.includes('popup-closed-by-user')) {
           console.info('[Auth] Google Sign-In popup closed by user.');
           setAuthError('Sign-in cancelled. Please select a Google account to proceed.');
           return;
@@ -393,7 +406,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        // Re-throw other errors (such as unauthorized-domain)
+        // If popup was blocked or unsupported and we are NOT in standalone PWA, fall back to redirect
+        if (
+          (popupCode.includes('popup-blocked') ||
+            popupMsg.includes('popup-blocked') ||
+            popupCode.includes('operation-not-supported')) &&
+          !isStandalone
+        ) {
+          console.warn('[Auth] Popup blocked in standard browser tab. Falling back to signInWithRedirect...');
+          sessionStorage.setItem('sm_oauth_redirect_pending', 'google');
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+
+        // Re-throw other errors (e.g. unauthorized-domain)
         throw popupErr;
       }
 
@@ -401,7 +427,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('No user credentials received from Google');
       }
 
-      // 4. Exchange the verified Firebase ID Token with the server
+      // Exchange the verified Firebase ID Token with the server
       const idToken = await userCredential.user.getIdToken();
       const response = await fetch('/api/auth/social', {
         method: 'POST',
@@ -608,6 +634,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const data = await response.json();
+      if (data.token) {
+        saveSessionToken(data.token);
+      }
       setCurrentUser(data.user);
       return true;
     } catch (err: any) {
@@ -659,6 +688,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const data = await response.json();
+      if (data.token) {
+        saveSessionToken(data.token);
+      }
       setCurrentUser(data.user);
       return true;
     } catch (err: any) {
@@ -703,12 +735,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return anySuccess || true;
   };
 
+  const resetPasswordWithNewCredentials = async (
+    identifier: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message?: string; error?: string }> => {
+    setAuthError(null);
+    const target = identifier.trim();
+    if (!target) {
+      return { success: false, error: 'Please enter your username, badge number, or official email.' };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters long.' };
+    }
+
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: target, newPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to update password.' };
+      }
+
+      // Also dispatch Firebase password reset email if identifier looks like an email and Firebase is configured
+      if (target.includes('@') && isFirebaseConfigured && auth) {
+        sendPasswordResetEmail(auth, target).catch(() => {});
+      }
+
+      return { success: true, message: data.message || 'Password updated successfully! You can now log in.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Could not connect to reset password service.' };
+    }
+  };
+
   const logout = async () => {
     try {
       await unsubscribeFromPush().catch(() => {});
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
       await firebaseSignOut(auth).catch(() => {});
       sessionStorage.removeItem('summonsmitra_welcomed');
+      sessionStorage.removeItem('sm_auth_token');
+      localStorage.removeItem('sm_auth_token');
     } catch (err) {
       console.error("Logout error", err);
     }
@@ -723,7 +792,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const now = new Date().toISOString();
       const updatedProfile = { ...currentUser, ...updates, updatedAt: now };
 
-      // Update Firestore user profile
+      // 1. Update Firestore user profile
       try {
         const { db, doc, setDoc } = await import('../services/firebase');
         if (db && currentUser.uid) {
@@ -734,12 +803,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('[Auth] Firestore profile update notice:', fsErr);
       }
 
-      // Update server session profile
+      // 2. Update Firebase Auth user display name or photo if signed in with Firebase (only if photoURL is a valid URL <= 2048 chars)
+      if (auth.currentUser) {
+        try {
+          const { updateProfile: fbUpdateProfile } = await import('firebase/auth');
+          const fbUpdates: any = {};
+          if (updates.displayName) fbUpdates.displayName = updates.displayName;
+          if (updates.photoURL && !updates.photoURL.startsWith('data:') && updates.photoURL.length <= 2048) {
+            fbUpdates.photoURL = updates.photoURL;
+          }
+          if (Object.keys(fbUpdates).length > 0) {
+            await fbUpdateProfile(auth.currentUser, fbUpdates);
+          }
+        } catch (fbProfileErr) {
+          console.warn('[Auth] Firebase Auth profile update notice:', fbProfileErr);
+        }
+      }
+
+      // 3. Update server session profile with full authenticated headers (Bearer token & cookies)
+      const { getAuthHeaders } = await import('../services/apiClient');
+      const authHeaders = await getAuthHeaders();
       const response = await fetch('/api/auth/me', {
         method: 'PUT',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        body: JSON.stringify(updates),
       });
       
       if (!response.ok) {
@@ -753,7 +844,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       const data = await response.json();
-      setCurrentUser({ ...updatedProfile, ...data.user });
+      const finalUser = { ...updatedProfile, ...(data.user || {}) };
+      setCurrentUser(finalUser);
     } catch (err: any) {
       console.error("Profile update error:", err);
       throw err;
@@ -774,6 +866,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithCredentials,
         registerOfficer,
         resetPassword,
+        resetPasswordWithNewCredentials,
         logout,
         updateOfficerProfile,
         clearAuthError,

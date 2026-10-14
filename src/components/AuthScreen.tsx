@@ -11,6 +11,9 @@ import {
   Mail,
   HelpCircle,
   ArrowLeft,
+  Eye,
+  EyeOff,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { defaultFirebaseConfig } from '../services/firebase';
@@ -24,6 +27,7 @@ export const AuthScreen: React.FC = () => {
     loginWithCredentials,
     registerOfficer,
     resetPassword,
+    resetPasswordWithNewCredentials,
     authError,
     clearAuthError,
   } = useAuth();
@@ -31,6 +35,14 @@ export const AuthScreen: React.FC = () => {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [emailOrBadge, setEmailOrBadge] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [resetIdentifier, setResetIdentifier] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
+  const [showRegisterConfirmPassword, setShowRegisterConfirmPassword] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [badgeNumber, setBadgeNumber] = useState('');
@@ -102,22 +114,37 @@ export const AuthScreen: React.FC = () => {
     clearAuthError();
     setResetSuccess(null);
 
-    if (!emailOrBadge.trim()) {
-      setLocalError('Please enter your official email address');
+    const targetIdentifier = (resetIdentifier || emailOrBadge).trim();
+    if (!targetIdentifier) {
+      setLocalError('Please enter your Officer Username, Badge Number, or Official Email.');
       return;
     }
 
-    const email = emailOrBadge.includes('@')
-      ? emailOrBadge.trim()
-      : `${emailOrBadge.trim().toLowerCase()}@delhipolice.gov.in`;
+    if (!newPassword || newPassword.length < 6) {
+      setLocalError('New password must be at least 6 characters long.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setLocalError('Passwords do not match. Please ensure both fields are identical.');
+      return;
+    }
 
     setLoading(true);
     try {
-      const ok = await resetPassword(email);
-      if (ok) {
-        setResetSuccess(`Password reset instructions have been dispatched to ${email}`);
+      const result = await resetPasswordWithNewCredentials(targetIdentifier, newPassword);
+      if (result.success) {
+        setResetSuccess(result.message || 'Password updated successfully! Switching to sign in...');
+        setEmailOrBadge(targetIdentifier);
+        setPassword(newPassword);
+        setNewPassword('');
+        setConfirmPassword('');
+        setTimeout(() => {
+          setMode('login');
+          setResetSuccess(null);
+        }, 2200);
       } else {
-        setLocalError('Could not process password reset for this address.');
+        setLocalError(result.error || 'Could not reset password. Please verify your officer credentials.');
       }
     } finally {
       setLoading(false);
@@ -164,6 +191,12 @@ export const AuthScreen: React.FC = () => {
 
         if (password.length < 6) {
           setLocalError('Password must be at least 6 characters long');
+          setLoading(false);
+          return;
+        }
+
+        if (password !== registerConfirmPassword) {
+          setLocalError('Passwords do not match. Please verify that both password fields are identical.');
           setLoading(false);
           return;
         }
@@ -325,37 +358,93 @@ export const AuthScreen: React.FC = () => {
 
           {/* FORGOT PASSWORD MODE */}
           {mode === 'forgot' ? (
-            <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+            <form onSubmit={handleResetPasswordSubmit} className="space-y-3.5">
               <div className="space-y-1">
-                <h2 className="text-sm font-bold text-foreground">Reset Official Access Password</h2>
-                <p className="text-xs text-muted-foreground">
-                  Enter your registered police email to receive secure recovery instructions.
+                <div className="flex items-center gap-2 text-primary-text">
+                  <ShieldCheck className="w-4 h-4" />
+                  <h2 className="text-sm font-bold text-foreground">Reset Officer Access Password</h2>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Enter your registered username, badge number, or official email along with your new password to restore full access.
                 </p>
               </div>
 
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">
-                  Official Email Address
+                  Officer Username, Badge # or Email <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <User className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="email"
-                    value={emailOrBadge}
-                    onChange={(e) => setEmailOrBadge(e.target.value)}
-                    placeholder="officer@delhipolice.gov.in"
-                    className="w-full bg-background border border-border rounded-xl pl-9 pr-3 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
+                    type="text"
+                    value={resetIdentifier || emailOrBadge}
+                    onChange={(e) => {
+                      setResetIdentifier(e.target.value);
+                      setEmailOrBadge(e.target.value);
+                    }}
+                    placeholder="e.g. rsharma, DL-POL-4402, or officer@delhipolice.gov.in"
+                    className="w-full bg-background border border-border rounded-xl pl-9 pr-3 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text font-medium"
                     required
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">
+                  New Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    className="w-full bg-background border border-border rounded-xl pl-9 pr-10 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((prev) => !prev)}
+                    aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer p-0.5"
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">
+                  Confirm New Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full bg-background border border-border rounded-xl pl-9 pr-10 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((prev) => !prev)}
+                    aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer p-0.5"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 px-4 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-lg disabled:opacity-50 cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-xl bg-primary-btn text-white hover:bg-primary-hover text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-lg disabled:opacity-50 cursor-pointer mt-1"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Dispatch Reset Link</span>}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Update Password & Enter Portal</span>}
               </button>
 
               <button
@@ -366,7 +455,7 @@ export const AuthScreen: React.FC = () => {
                   setResetSuccess(null);
                   clearAuthError();
                 }}
-                className="w-full text-center text-xs text-primary-text hover:underline flex items-center justify-center gap-1 pt-2"
+                className="w-full text-center text-xs text-primary-text hover:underline flex items-center justify-center gap-1 pt-1"
               >
                 <ArrowLeft className="w-3.5 h-3.5" /> Back to Sign In
               </button>
@@ -577,16 +666,52 @@ export const AuthScreen: React.FC = () => {
                   <div className="relative">
                     <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       id="auth-password-input"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-background border border-border rounded-xl pl-9 pr-3 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
+                      placeholder={mode === 'register' ? 'Create a secure password (min 6 chars)' : '••••••••'}
+                      className="w-full bg-background border border-border rounded-xl pl-9 pr-10 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
                       required
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-lg cursor-pointer transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
+
+                {mode === 'register' && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">
+                      Confirm Password <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type={showRegisterConfirmPassword ? 'text' : 'password'}
+                        id="auth-register-confirm-password-input"
+                        value={registerConfirmPassword}
+                        onChange={(e) => setRegisterConfirmPassword(e.target.value)}
+                        placeholder="Re-enter password to confirm"
+                        className="w-full bg-background border border-border rounded-xl pl-9 pr-10 py-2 text-xs text-foreground placeholder-muted-foreground-alt focus:outline-none focus:border-primary-text"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegisterConfirmPassword((prev) => !prev)}
+                        aria-label={showRegisterConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-lg cursor-pointer transition-colors"
+                      >
+                        {showRegisterConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <button
                 type="submit"

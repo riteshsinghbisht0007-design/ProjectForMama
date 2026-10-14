@@ -2,11 +2,14 @@ import React, { useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Calendar as CalendarIcon,
   Plus,
   Clock,
   MapPin,
   Building2,
+  Grid,
 } from 'lucide-react';
 import { Summon } from '../types';
 
@@ -25,6 +28,8 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
   const [selectedDateStr, setSelectedDateStr] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
+  const [showYearGrid, setShowYearGrid] = useState<boolean>(false);
+  const [decadeStart, setDecadeStart] = useState<number>(() => Math.floor(new Date().getFullYear() / 10) * 10);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -77,48 +82,208 @@ export const HearingCalendarView: React.FC<HearingCalendarViewProps> = ({
     <div className="space-y-6">
       <div className="bg-card border border-border rounded-2xl p-5 shadow-lg">
         {/* Calendar Navigation */}
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-muted text-primary-text">
-              <CalendarIcon className="w-4 h-4" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary-text border border-primary/20">
+              <CalendarIcon className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-foreground text-base">
-                {monthNames[month]} {year}
-              </h3>
-              <p className="text-xs text-muted-foreground">Judicial Court Hearing Schedules</p>
+              <div className="flex items-center gap-2">
+                {/* Interactive Month Selector */}
+                <select
+                  value={month}
+                  onChange={(e) => setCurrentDate(new Date(year, Number(e.target.value), 1))}
+                  aria-label="Select calendar month"
+                  className="font-bold text-foreground text-sm sm:text-base bg-background border border-border rounded-lg px-2 py-1 focus:outline-none focus:border-primary-text cursor-pointer hover:border-border-strong transition-colors"
+                >
+                  {monthNames.map((m, idx) => (
+                    <option key={m} value={idx}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Interactive Year Selector */}
+                <div className="relative">
+                  <select
+                    value={year}
+                    onChange={(e) => {
+                      const newY = Number(e.target.value);
+                      setCurrentDate(new Date(newY, month, 1));
+                      setDecadeStart(Math.floor(newY / 10) * 10);
+                    }}
+                    aria-label="Select calendar year"
+                    className="font-bold text-foreground text-sm sm:text-base bg-background border border-border rounded-lg px-2 py-1 focus:outline-none focus:border-primary-text cursor-pointer hover:border-border-strong transition-colors font-mono"
+                  >
+                    {Array.from({ length: 34 }, (_, i) => 2012 + i).map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Quick Year Grid / Decade Picker Toggle */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDecadeStart(Math.floor(year / 10) * 10);
+                    setShowYearGrid((prev) => !prev);
+                  }}
+                  title="Open Quick Year Grid Selector"
+                  aria-label="Open year grid selector"
+                  className={`p-1.5 rounded-lg border text-xs font-mono font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+                    showYearGrid
+                      ? 'bg-primary-btn text-white border-primary-btn shadow-sm'
+                      : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
+                  }`}
+                >
+                  <Grid className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Years</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Judicial Court Hearing Schedules</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 self-end sm:self-auto">
+            {/* Quick Year Jump Backward */}
+            <button
+              type="button"
+              onClick={() => setCurrentDate(new Date(year - 1, month, 1))}
+              aria-label="Previous year"
+              title="Previous Year"
+              className="px-2 py-1 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground btn-premium cursor-pointer font-mono font-medium"
+            >
+              -1Y
+            </button>
+
             <button
               type="button"
               onClick={prevMonth}
               id="prev-month-btn"
               aria-label="Previous month"
+              title="Previous Month"
               className="p-1.5 rounded-lg border border-border text-foreground btn-premium cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
+
             <button
               type="button"
               onClick={() => setCurrentDate(new Date())}
               id="today-month-btn"
-              className="px-2.5 py-1 text-xs rounded-lg border border-border text-primary-text btn-premium cursor-pointer"
+              title="Return to Today"
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-border text-primary-text hover:bg-primary/10 transition-colors cursor-pointer"
             >
               Today
             </button>
+
             <button
               type="button"
               onClick={nextMonth}
               id="next-month-btn"
               aria-label="Next month"
+              title="Next Month"
               className="p-1.5 rounded-lg border border-border text-foreground btn-premium cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
+
+            {/* Quick Year Jump Forward */}
+            <button
+              type="button"
+              onClick={() => setCurrentDate(new Date(year + 1, month, 1))}
+              aria-label="Next year"
+              title="Next Year"
+              className="px-2 py-1 rounded-lg border border-border text-xs text-muted-foreground hover:text-foreground btn-premium cursor-pointer font-mono font-medium"
+            >
+              +1Y
+            </button>
           </div>
         </div>
+
+        {/* Quick Year Picker Decade Popover Modal */}
+        {showYearGrid && (
+          <div className="mb-4 p-4 rounded-xl bg-card border border-primary/30 shadow-xl animate-scaleIn">
+            <div className="flex items-center justify-between pb-3 border-b border-border mb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold font-mono text-primary-text uppercase">
+                  Select Year ({decadeStart} – {decadeStart + 9})
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setDecadeStart((d) => d - 10)}
+                  className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Previous Decade"
+                  aria-label="Previous decade"
+                >
+                  <ChevronsLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentY = new Date().getFullYear();
+                    setDecadeStart(Math.floor(currentY / 10) * 10);
+                    setCurrentDate(new Date(currentY, month, 1));
+                    setShowYearGrid(false);
+                  }}
+                  className="px-2 py-0.5 text-[11px] font-semibold rounded bg-muted hover:bg-muted/80 text-foreground cursor-pointer"
+                >
+                  Current Year
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDecadeStart((d) => d + 10)}
+                  className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Next Decade"
+                  aria-label="Next decade"
+                >
+                  <ChevronsRight className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowYearGrid(false)}
+                  className="text-xs px-2 py-0.5 ml-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                >
+                  ✕ Close
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+              {Array.from({ length: 12 }, (_, i) => decadeStart - 1 + i).map((y) => {
+                const isSelected = y === year;
+                const isCurrentYear = y === new Date().getFullYear();
+                const isOutOfDecade = y < decadeStart || y > decadeStart + 9;
+
+                return (
+                  <button
+                    key={y}
+                    type="button"
+                    onClick={() => {
+                      setCurrentDate(new Date(y, month, 1));
+                      setShowYearGrid(false);
+                    }}
+                    className={`py-2 px-1 text-xs rounded-lg font-mono font-semibold transition-all cursor-pointer text-center ${
+                      isSelected
+                        ? 'bg-primary-btn text-white shadow-sm ring-2 ring-primary/40'
+                        : isCurrentYear
+                        ? 'bg-primary/10 text-primary-text border border-primary/30 hover:bg-primary/20'
+                        : isOutOfDecade
+                        ? 'text-muted-foreground/50 hover:text-foreground hover:bg-muted'
+                        : 'text-foreground hover:bg-muted border border-transparent hover:border-border'
+                    }`}
+                  >
+                    {y}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Days Header */}
         <div className="grid grid-cols-7 text-center text-xs font-medium text-muted-foreground pb-2 border-b border-border">

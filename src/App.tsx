@@ -72,10 +72,52 @@ export function App() {
     }
   }, []);
 
-  // 2. Register FCM & Web Push Service Worker on startup
+  // 2. Register FCM & Web Push Service Worker and handle PWA updates
+  const [swUpdateAvailable, setSwUpdateAvailable] = useState(false);
+  const waitingWorkerRef = React.useRef<ServiceWorker | null>(null);
+
   React.useEffect(() => {
-    registerPushServiceWorker().catch(() => {});
+    if (!('serviceWorker' in navigator)) return;
+
+    registerPushServiceWorker()
+      .then((reg) => {
+        if (!reg) return;
+
+        if (reg.waiting) {
+          waitingWorkerRef.current = reg.waiting;
+          setSwUpdateAvailable(true);
+        }
+
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              waitingWorkerRef.current = newWorker;
+              setSwUpdateAvailable(true);
+            }
+          });
+        });
+      })
+      .catch(() => {});
+
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!refreshing) {
+        refreshing = true;
+        window.location.reload();
+      }
+    });
   }, []);
+
+  const handleUpdateApp = () => {
+    if (waitingWorkerRef.current) {
+      waitingWorkerRef.current.postMessage({ type: 'SKIP_WAITING' });
+    } else {
+      window.location.reload();
+    }
+  };
 
   // 3. Resolve deep-linked summon after authentication (only once on initial mount/auth)
   const hasResolvedDeepLinkRef = React.useRef(false);
@@ -309,6 +351,23 @@ export function App() {
             if (s) setSelectedSummon(s);
           }}
         />
+
+        {/* PWA Update Available Notification Banner */}
+        {swUpdateAvailable && (
+          <div className="bg-primary-btn text-white px-4 py-2.5 text-xs font-semibold flex items-center justify-between shadow-md border-b border-primary-hover animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>A new updated version of Summons Mitra is available.</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleUpdateApp}
+              className="px-3 py-1 bg-white text-primary-btn hover:bg-neutral-100 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+            >
+              Update Now
+            </button>
+          </div>
+        )}
       </motion.div>
 
       {/* Main Container */}

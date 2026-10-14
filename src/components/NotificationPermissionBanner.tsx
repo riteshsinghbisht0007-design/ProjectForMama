@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, ShieldCheck, X, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Bell, ShieldCheck, X, Sparkles, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import {
   isPushNotificationSupported,
   getNotificationPermissionState,
@@ -17,6 +17,7 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
   const [isDismissed, setIsDismissed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   useEffect(() => {
     if (!isPushNotificationSupported()) return;
@@ -33,22 +34,26 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
   const handleEnable = async () => {
     setIsLoading(true);
     setStatusMessage(null);
+    setIsSuccess(false);
     try {
       const result = await requestPushPermissionAndSubscribe();
       const newPerm = getNotificationPermissionState();
       setPermission(newPerm);
 
       if (result.success) {
+        setIsSuccess(true);
         setStatusMessage('Device notifications activated!');
         setTimeout(() => {
           setIsDismissed(true);
           sessionStorage.setItem('summonsmitra_push_dismissed', 'true');
         }, 2500);
       } else if (result.error) {
+        setIsSuccess(false);
         setStatusMessage(result.error);
       }
       if (onPermissionChanged) onPermissionChanged();
     } catch (err: any) {
+      setIsSuccess(false);
       setStatusMessage(err.message || 'Could not enable notifications.');
     } finally {
       setIsLoading(false);
@@ -99,9 +104,31 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
 
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           {statusMessage ? (
-            <div className="flex items-center gap-1.5 text-xs text-primary font-medium px-3 py-1.5 rounded-lg bg-primary/10">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-              <span>{statusMessage}</span>
+            <div className="flex items-center gap-2">
+              <div
+                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg ${
+                  isSuccess
+                    ? 'text-emerald-700 bg-emerald-500/10 border border-emerald-500/20 dark:text-emerald-300'
+                    : 'text-amber-700 bg-amber-500/10 border border-amber-500/20 dark:text-amber-300'
+                }`}
+              >
+                {isSuccess ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                )}
+                <span>{statusMessage}</span>
+              </div>
+              {!isSuccess && (
+                <button
+                  type="button"
+                  onClick={handleEnable}
+                  disabled={isLoading}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-primary-btn text-white hover:bg-primary-hover font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" /> Retry
+                </button>
+              )}
             </div>
           ) : (
             <>

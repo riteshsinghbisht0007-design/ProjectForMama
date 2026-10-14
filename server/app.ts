@@ -356,7 +356,7 @@ export async function getApp() {
       origin: true, // Echo origin to allow development and production mobile/desktop domains
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-auth-token'],
     })
   );
 
@@ -1019,11 +1019,18 @@ export async function getApp() {
         return res.status(400).json({ error: 'Official email or username is required' });
       }
 
+      const escapedTarget = rawTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const ciRegex = new RegExp(`^${escapedTarget}$`, 'i');
+
       const user = await currentDb.collection('users').findOne({
         $or: [
           { email: rawTarget },
+          { email: ciRegex },
           { username: rawTarget },
+          { username: ciRegex },
           { badgeNumber: rawTarget.toUpperCase() },
+          { badgeNumber: rawTarget },
+          { badgeNumber: ciRegex },
         ],
       });
 
@@ -1045,6 +1052,77 @@ export async function getApp() {
     } catch (err: any) {
       console.error('[Auth] Password reset error:', err);
       res.status(500).json({ error: 'Could not process password recovery request' });
+    }
+  });
+
+  // 2c. Set New Password / Direct Password Reset
+  app.post('/api/auth/reset-password', async (req: any, res: any) => {
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
+
+    try {
+      const { email, identifier, newPassword, password } = req.body;
+      const rawTarget = (email || identifier || '').trim();
+      const rawNewPassword = typeof newPassword === 'string' ? newPassword : (typeof password === 'string' ? password : '');
+
+      if (!rawTarget) {
+        return res.status(400).json({ error: 'Official email, username, or badge number is required.' });
+      }
+
+      if (!rawNewPassword || rawNewPassword.length < 6) {
+        return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+      }
+
+      const escapedTarget = rawTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const ciRegex = new RegExp(`^${escapedTarget}$`, 'i');
+
+      const user = await currentDb.collection('users').findOne({
+        $or: [
+          { email: rawTarget.toLowerCase() },
+          { email: ciRegex },
+          { username: rawTarget.toLowerCase() },
+          { username: ciRegex },
+          { badgeNumber: rawTarget.toUpperCase() },
+          { badgeNumber: rawTarget },
+          { badgeNumber: ciRegex },
+        ],
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: 'No officer account found matching the provided identifier.' });
+      }
+
+      // Hash password securely with bcrypt (cost factor 12)
+      const passwordHash = await bcrypt.hash(rawNewPassword, 12);
+      const now = new Date();
+
+      await currentDb.collection('users').updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            passwordHash,
+            updatedAt: now,
+            passwordResetAt: now,
+          },
+        }
+      );
+
+      const uid = user.uid || user._id.toString();
+      await logActivity(
+        currentDb,
+        uid,
+        'PASSWORD_RESET_COMPLETED',
+        `Password was successfully updated for officer ${user.displayName || user.username || user.badgeNumber}`,
+        uid
+      );
+
+      res.status(200).json({
+        success: true,
+        message: 'Password updated successfully. You can now log in with your new password.',
+      });
+    } catch (err: any) {
+      console.error('[Auth] Reset password error:', err);
+      res.status(500).json({ error: err.message || 'Could not reset password.' });
     }
   });
 
@@ -1399,29 +1477,61 @@ export async function getApp() {
         updates.fullName = updates.displayName;
       }
 
-      // Sync photoURL with profilePhoto
-      if (updates.photoURL) {
-        updates.profilePhoto = updates.photoURL;
-      } else if (updates.profilePhoto) {
-        updates.photoURL = updates.profilePhoto;
+      // Sync photoURL with profilePhoto and ensure string type for MongoDB schema validator
+      if (updates.photoURL !== undefined) {
+        const cleanPhoto = updates.photoURL || '';
+        updates.photoURL = cleanPhoto;
+        updates.profilePhoto = cleanPhoto;
+      } else if (updates.profilePhoto !== undefined) {
+        const cleanPhoto = updates.profilePhoto || '';
+        updates.photoURL = cleanPhoto;
+        updates.profilePhoto = cleanPhoto;
       }
 
       const now = new Date();
       updates.updatedAt = now;
       updates.lastActivityAt = now;
 
-      const userFilter = req.user._id
-        ? (ObjectId.isValid(req.user._id) ? { _id: new ObjectId(req.user._id) } : { _id: req.user._id })
-        : { $or: [{ uid: req.user.uid }, { providerId: req.user.uid }] };
+      // Construct bulletproof user filter matching by _id, uid, id, or email
+      const userConditions: any[] = [];
+      if (req.user._id) {
+        if (ObjectId.isValid(req.user._id)) {
+          userConditions.push({ _id: new ObjectId(req.user._id) });
+        }
+        userConditions.push({ _id: req.user._id });
+        userConditions.push({ id: req.user._id });
+      }
+      if (req.user.uid) {
+        userConditions.push({ uid: req.user.uid });
+        userConditions.push({ providerId: req.user.uid });
+        userConditions.push({ id: req.user.uid });
+      }
+      if (req.user.email) {
+        userConditions.push({ email: req.user.email });
+      }
+      const userFilter = userConditions.length > 0 ? (userConditions.length === 1 ? userConditions[0] : { $or: userConditions }) : { _id: req.user._id };
 
-      // If username is being changed, ensure it is unique
+      // If username is being changed, ensure it is unique across OTHER officers
       if (updates.username) {
         const normUser = String(updates.username).toLowerCase().trim();
+        const userObjId = ObjectId.isValid(req.user._id) ? new ObjectId(req.user._id) : null;
+        const currentUserIdStr = req.user._id ? String(req.user._id) : null;
+        const currentUid = req.user.uid ? String(req.user.uid) : null;
+
+        const notCurrentUserConditions: any[] = [];
+        if (userObjId) notCurrentUserConditions.push({ _id: { $ne: userObjId } });
+        if (currentUserIdStr) notCurrentUserConditions.push({ _id: { $ne: currentUserIdStr } });
+        if (currentUid) {
+          notCurrentUserConditions.push({ uid: { $ne: currentUid } });
+          notCurrentUserConditions.push({ providerId: { $ne: currentUid } });
+        }
+
         const existingWithUsername = await currentDb.collection('users').findOne({
           username: normUser,
-          _id: { $ne: req.user._id },
+          ...(notCurrentUserConditions.length > 0 ? { $and: notCurrentUserConditions } : {}),
         });
-        if (existingWithUsername && existingWithUsername.uid !== req.user.uid) {
+
+        if (existingWithUsername) {
           return res.status(409).json({ error: 'This username is already taken by another officer.' });
         }
         updates.username = normUser;
@@ -2466,7 +2576,8 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
 
   app.post('/api/notifications/fcm-token', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { token, subscription, deviceType } = req.body;
       if (!token && !subscription) {
@@ -2474,9 +2585,9 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
       }
 
       const tokenIdentifier = token || (subscription?.endpoint ? `sub_${Buffer.from(subscription.endpoint).toString('base64').slice(-32)}` : `sub_${Date.now()}`);
-      const userId = req.user.uid;
+      const userId = req.user.uid || req.user._id || req.user.id;
 
-      await db.collection('fcm_tokens').updateOne(
+      await currentDb.collection('fcm_tokens').updateOne(
         { token: tokenIdentifier },
         {
           $set: {
@@ -2504,12 +2615,14 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
 
   app.delete('/api/notifications/fcm-token', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { token } = req.body;
+      const userId = req.user.uid || req.user._id || req.user.id;
       if (token) {
-        await db.collection('fcm_tokens').updateMany(
-          { token, userId: req.user.uid },
+        await currentDb.collection('fcm_tokens').updateMany(
+          { token, userId },
           { $set: { isActive: false, deactivatedAt: new Date().toISOString() } }
         );
       }
@@ -2520,10 +2633,11 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
 
   app.post('/api/notifications/test-push', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const userId = req.user.uid;
-      const tokens = await db.collection('fcm_tokens').find({ userId, isActive: true }).toArray();
+      const tokens = await currentDb.collection('fcm_tokens').find({ userId, isActive: true }).toArray();
       if (tokens.length === 0) {
         return res.status(404).json({
           error: 'No active device registered for push notifications. Please allow notifications on this device first.',
@@ -2562,13 +2676,14 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
 
   // --- In-App Notifications Endpoints ---
   app.get('/api/notifications', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { today, upcomingDays = 7 } = req.query;
       const userId = req.user.uid;
       const todayStr = today || getIndiaDateString();
 
-      const summons = await db.collection('summons').find({ userId, status: { $ne: 'Completed' } }).toArray();
+      const summons = await currentDb.collection('summons').find({ userId, status: { $ne: 'Completed' } }).toArray();
       const [tY, tM, tD] = todayStr.split('-').map(Number);
       const todayMidnight = Date.UTC(tY, tM - 1, tD);
       const bulkOps = [];
@@ -2630,10 +2745,10 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
       }
       
       if (bulkOps.length > 0) {
-        await db.collection('notifications').bulkWrite(bulkOps, { ordered: false });
+        await currentDb.collection('notifications').bulkWrite(bulkOps, { ordered: false });
       }
       
-      const notifications = await db.collection('notifications')
+      const notifications = await currentDb.collection('notifications')
         .find({ userId })
         .sort({ createdAt: -1 })
         .toArray();
@@ -2646,13 +2761,14 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
 
   app.put('/api/notifications/:id/read', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { id } = req.params;
       const filter = ObjectId.isValid(id)
         ? { _id: new ObjectId(id), userId: req.user.uid }
         : { _id: id, userId: req.user.uid };
-      await db.collection('notifications').updateOne(
+      await currentDb.collection('notifications').updateOne(
         filter,
         { $set: { isRead: true } }
       );
@@ -2663,9 +2779,10 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
   
   app.put('/api/notifications/read-all', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
-      await db.collection('notifications').updateMany(
+      await currentDb.collection('notifications').updateMany(
         { userId: req.user.uid, isRead: false },
         { $set: { isRead: true } }
       );
@@ -2676,10 +2793,11 @@ IMPORTANT: Return ONLY valid JSON. Absolutely zero markdown framing outside the 
   });
 
   app.delete('/api/notifications/cleanup/:summonsId', requireAuth, async (req: any, res: any) => {
-    if (!db) return res.status(503).json({ error: 'Database disconnected' });
+    const currentDb = req.db || db;
+    if (!currentDb) return res.status(503).json({ error: 'Database disconnected' });
     try {
       const { summonsId } = req.params;
-      await db.collection('notifications').deleteMany({ userId: req.user.uid, summonsId });
+      await currentDb.collection('notifications').deleteMany({ userId: req.user.uid, summonsId });
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

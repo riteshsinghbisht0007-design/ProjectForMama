@@ -41,26 +41,57 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   const imgRef = useRef<HTMLImageElement>(null);
 
   const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const { width, height } = e.currentTarget;
     if (aspectRatio) {
-      const { width, height } = e.currentTarget;
-      setCrop(centerAspectCrop(width, height, aspectRatio));
+      const initialCrop = centerAspectCrop(width, height, aspectRatio);
+      setCrop(initialCrop);
+      const minDim = Math.min(width, height) * 0.9;
+      setCompletedCrop({
+        unit: 'px',
+        x: (width - minDim) / 2,
+        y: (height - minDim) / 2,
+        width: minDim,
+        height: minDim,
+      });
+    } else {
+      setCrop({
+        unit: '%',
+        width: 100,
+        height: 100,
+        x: 0,
+        y: 0,
+      });
+      setCompletedCrop({
+        unit: 'px',
+        x: 0,
+        y: 0,
+        width,
+        height,
+      });
     }
   };
 
   const handleApplyCrop = async () => {
-    if (imgRef.current && completedCrop?.width && completedCrop?.height) {
+    if (imgRef.current) {
       const canvas = document.createElement('canvas');
-      const scaleX = imgRef.current.naturalWidth / imgRef.current.width;
-      const scaleY = imgRef.current.naturalHeight / imgRef.current.height;
+      const natWidth = imgRef.current.naturalWidth || imgRef.current.width || 400;
+      const natHeight = imgRef.current.naturalHeight || imgRef.current.height || 400;
+      const curWidth = imgRef.current.width || natWidth;
+      const curHeight = imgRef.current.height || natHeight;
 
-      const pixelRatio = window.devicePixelRatio;
+      const scaleX = natWidth / curWidth;
+      const scaleY = natHeight / curHeight;
 
-      
-      // Add max dimension scaling for performance
-      const MAX_DIMENSION = 1600;
-      let finalWidth = completedCrop.width * scaleX;
-      let finalHeight = completedCrop.height * scaleY;
-      
+      const cropWidth = (completedCrop?.width && completedCrop.width > 10) ? completedCrop.width : curWidth;
+      const cropHeight = (completedCrop?.height && completedCrop.height > 10) ? completedCrop.height : curHeight;
+      const cropX = completedCrop?.x !== undefined ? completedCrop.x : 0;
+      const cropY = completedCrop?.y !== undefined ? completedCrop.y : 0;
+
+      // Add max dimension scaling for performance (400px for square avatars, 1600px for document scans)
+      const MAX_DIMENSION = aspectRatio === 1 ? 400 : 1600;
+      let finalWidth = cropWidth * scaleX;
+      let finalHeight = cropHeight * scaleY;
+
       if (finalWidth > MAX_DIMENSION || finalHeight > MAX_DIMENSION) {
         if (finalWidth > finalHeight) {
           finalHeight = Math.round(finalHeight * (MAX_DIMENSION / finalWidth));
@@ -71,23 +102,27 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
         }
       }
 
+      finalWidth = Math.max(1, Math.round(finalWidth));
+      finalHeight = Math.max(1, Math.round(finalHeight));
+
       canvas.width = finalWidth;
       canvas.height = finalHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      const cropX = completedCrop.x * scaleX;
-      const cropY = completedCrop.y * scaleY;
-      const cropWidth = completedCrop.width * scaleX;
-      const cropHeight = completedCrop.height * scaleY;
+      const sx = Math.max(0, cropX * scaleX);
+      const sy = Math.max(0, cropY * scaleY);
+      const sw = Math.min(natWidth - sx, cropWidth * scaleX);
+      const sh = Math.min(natHeight - sy, cropHeight * scaleY);
 
       ctx.drawImage(
         imgRef.current,
-        cropX,
-        cropY,
-        cropWidth,
-        cropHeight,
+        sx,
+        sy,
+        sw,
+        sh,
         0,
         0,
         finalWidth,
@@ -101,12 +136,13 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
           }
         },
         'image/jpeg',
-        0.75 // Optimized quality for fast OCR
+        aspectRatio === 1 ? 0.85 : 0.75
       );
-
     } else {
-      // If no crop selection, just return original image blob
-      fetch(imageSrc).then(r => r.blob()).then(blob => onCropComplete(blob));
+      fetch(imageSrc)
+        .then((r) => r.blob())
+        .then((blob) => onCropComplete(blob))
+        .catch(() => {});
     }
   };
 
