@@ -37,11 +37,12 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
 
 /**
  * Robust, authenticated fetch wrapper for Summons Mitra backend API.
- * Ensures authorization header is attached, cookies are included, and errors are cleanly propagated.
+ * Ensures authorization header is attached, cookies are included, errors are cleanly propagated,
+ * and requests have a reasonable bounded timeout (default 10s) to never hang indefinitely.
  */
 export async function apiFetch<T = any>(
   url: string,
-  options: RequestInit = {}
+  options: RequestInit & { timeoutMs?: number } = {}
 ): Promise<T> {
   const authHeaders = await getAuthHeaders();
   const mergedHeaders = {
@@ -49,11 +50,33 @@ export async function apiFetch<T = any>(
     ...((options.headers as Record<string, string>) || {}),
   };
 
-  const response = await fetch(url, {
-    ...options,
-    credentials: 'include',
-    headers: mergedHeaders,
-  });
+  const timeoutMs = options.timeoutMs ?? 10000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // If a caller signal was provided, link it to abort controller
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort());
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      credentials: 'include',
+      headers: mergedHeaders,
+      signal: controller.signal,
+    });
+  } catch (fetchErr: any) {
+    if (fetchErr.name === 'AbortError') {
+      const timeoutError = new Error(`Network request to ${url} timed out after ${timeoutMs / 1000}s. Server may be temporarily slow.`);
+      (timeoutError as any).status = 408;
+      throw timeoutError;
+    }
+    throw fetchErr;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     let errorMsg = `Server request to ${url} failed with status ${response.status}`;
@@ -80,3 +103,4 @@ export async function apiFetch<T = any>(
   }
   return (await response.text()) as unknown as T;
 }
+

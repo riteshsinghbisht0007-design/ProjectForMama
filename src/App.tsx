@@ -10,6 +10,8 @@ import {
   ArrowUpDown,
   Sparkles,
   Shield,
+  ShieldAlert,
+  RefreshCw,
   Users,
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -35,7 +37,7 @@ import { registerPushServiceWorker } from './services/fcmService';
 import { auth } from './services/firebase';
 
 export function App() {
-  const { currentUser, isLoading: authLoading } = useAuth();
+  const { currentUser, isLoading: authLoading, authStatus, authError, retryAuth, logout } = useAuth();
   const { summons, metrics, isLoading: summonsLoading } = useSummons();
 
   // Navigation tab: 'docket' or 'calendar'
@@ -274,9 +276,43 @@ export function App() {
 
   // If not logged in, render the AuthScreen
   
+  // State machine for restoration & startup lifecycle
+  if (authStatus === 'error') {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div className="max-w-md w-full bg-card border border-border/80 rounded-2xl p-6 shadow-xl text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto border border-amber-500/20">
+            <ShieldAlert className="w-7 h-7" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold tracking-tight">Session Connection Issue</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {authError || 'Could not verify server session. Your cloud and local summons records remain protected.'}
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+            <button
+              onClick={() => retryAuth()}
+              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Retry Connection
+            </button>
+            <button
+              onClick={() => logout()}
+              className="flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted font-medium text-sm text-foreground transition-colors"
+            >
+              Back to Login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
         <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
         <p className="text-muted-foreground text-sm font-medium tracking-wide">Restoring your data...</p>
       </div>
@@ -289,7 +325,7 @@ export function App() {
 
   if (summonsLoading) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
         <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
         <p className="text-muted-foreground text-sm font-medium tracking-wide">Loading your summons...</p>
       </div>

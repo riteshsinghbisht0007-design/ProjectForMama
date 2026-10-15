@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { OfficerUser } from '../types';
 import {
   auth,
@@ -17,10 +17,14 @@ import {
 } from '../services/firebase';
 import { unsubscribeFromPush } from '../services/fcmService';
 
-interface AuthContextType {
+export type AuthStatus = 'initializing' | 'authenticated' | 'unauthenticated' | 'error';
+
+export interface AuthContextType {
+  authStatus: AuthStatus;
   currentUser: OfficerUser | null;
   isLoading: boolean;
   authError: string | null;
+  retryAuth: () => Promise<void>;
   isDark: boolean;
   toggleTheme: () => void;
   loginWithGoogle: () => Promise<void>;
@@ -54,7 +58,16 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<OfficerUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<OfficerUser | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('sm_cached_officer_user');
+        if (cached) return JSON.parse(cached);
+      } catch (_) {}
+    }
+    return null;
+  });
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('initializing');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -211,12 +224,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
     }
 
-    // Subscribe to Firebase Authentication state transitions
-    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+    // Resolve authentication state with clear explicit state transitions
+    const resolveAuthState = async (firebaseUser: FirebaseUser | null) => {
       if (!isMounted) return;
 
       if (firebaseUser) {
         setIsLoading(true);
+        setAuthStatus('initializing');
         try {
           // 1. Sync / load user profile from Firestore under /users/{uid} (bounded promise)
           const officerProfile = await syncOfficerProfileFromFirestore(firebaseUser);
@@ -226,7 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             const idToken = await firebaseUser.getIdToken();
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 4000);
+            const timer = setTimeout(() => controller.abort(), 4500);
             const syncRes = await fetch('/api/auth/social', {
               method: 'POST',
               credentials: 'include',
@@ -235,7 +249,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               signal: controller.signal,
             })
               .catch((backendErr) => {
-                console.warn('[Auth] Backend session sync note:', backendErr.message || backendErr);
+                console.warn('[Auth] Backend session sync note:', backendErr?.message || backendErr);
                 return null;
               })
               .finally(() => clearTimeout(timer));
@@ -243,8 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (syncRes && syncRes.ok) {
               const resData = await syncRes.json().catch(() => null);
               if (resData && resData.token) {
-                sessionStorage.setItem('sm_auth_token', resData.token);
-                localStorage.setItem('sm_auth_token', resData.token);
+                saveSessionToken(resData.token);
               }
               if (resData && resData.user) {
                 serverUser = resData.user;
@@ -255,61 +268,126 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           if (isMounted) {
-            setCurrentUser(serverUser ? { ...officerProfile, ...serverUser } : officerProfile);
+            const resolvedUser = serverUser ? { ...officerProfile, ...serverUser } : officerProfile;
+            setCurrentUser(resolvedUser);
+            try {
+              localStorage.setItem('sm_cached_officer_user', JSON.stringify(resolvedUser));
+            } catch (_) {}
+            setAuthStatus('authenticated');
             setAuthError(null);
+            setIsLoading(false);
           }
         } catch (err: any) {
-          console.error('[Auth] Error resolving authenticated user:', err);
+          console.error('[Auth] Error resolving authenticated Firebase user:', err);
           if (isMounted) {
-            setCurrentUser(null);
-          }
-        } finally {
-          if (isMounted) {
+            setAuthStatus('error');
+            setAuthError(err?.message || 'Error restoring user profile from database');
             setIsLoading(false);
           }
         }
+      } else {
         // When Firebase user is null, verify if an active Department ID / server JWT session exists
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2500);
-          const token =
-            typeof window !== 'undefined'
-              ? localStorage.getItem('sm_auth_token') || sessionStorage.getItem('sm_auth_token')
-              : null;
-          const meHeaders: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          if (token) {
-            meHeaders['Authorization'] = `Bearer ${token}`;
-            meHeaders['x-auth-token'] = token;
-          }
-          const meRes = await fetch('/api/auth/me', {
-            credentials: 'include',
-            headers: meHeaders,
-            signal: controller.signal,
-          })
-            .catch(() => null)
-            .finally(() => clearTimeout(timer));
+        const token =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('sm_auth_token') || sessionStorage.getItem('sm_auth_token')
+            : null;
 
-          if (meRes && meRes.ok && isMounted) {
-            const meData = await meRes.json().catch(() => null);
-            if (meData && meData.user) {
-              setCurrentUser(meData.user);
-              setIsLoading(false);
-              return;
+        if (token) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3500);
+            const meHeaders: Record<string, string> = {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+              'x-auth-token': token,
+            };
+            const meRes = await fetch('/api/auth/me', {
+              credentials: 'include',
+              headers: meHeaders,
+              signal: controller.signal,
+            })
+              .catch((err) => {
+                console.warn('[Auth] Server session verification network note:', err?.message || err);
+                return null;
+              })
+              .finally(() => clearTimeout(timer));
+
+            if (meRes && meRes.ok && isMounted) {
+              const meData = await meRes.json().catch(() => null);
+              if (meData && meData.user) {
+                setCurrentUser(meData.user);
+                try {
+                  localStorage.setItem('sm_cached_officer_user', JSON.stringify(meData.user));
+                } catch (_) {}
+                setAuthStatus('authenticated');
+                setIsLoading(false);
+                setAuthError(null);
+                return;
+              }
+            } else if (meRes && (meRes.status === 401 || meRes.status === 403)) {
+              clearSessionToken();
+            } else if (!meRes) {
+              // Backend unreachable / network offline: try cached offline session
+              const cached = typeof window !== 'undefined' ? localStorage.getItem('sm_cached_officer_user') : null;
+              if (cached && isMounted) {
+                try {
+                  const cachedUser = JSON.parse(cached);
+                  if (cachedUser?.uid) {
+                    console.info('[Auth] Backend unreachable, using cached offline user session.');
+                    setCurrentUser(cachedUser);
+                    setAuthStatus('authenticated');
+                    setIsLoading(false);
+                    return;
+                  }
+                } catch (_) {}
+              }
+              if (isMounted) {
+                setAuthStatus('error');
+                setAuthError('Backend server is temporarily unreachable. Please verify your connection.');
+                setIsLoading(false);
+                return;
+              }
             }
+          } catch (sessionCheckErr) {
+            console.warn('[Auth] Session check exception:', sessionCheckErr);
           }
-        } catch (_) {}
+        }
 
         if (isMounted) {
           setCurrentUser(null);
+          try {
+            localStorage.removeItem('sm_cached_officer_user');
+          } catch (_) {}
+          setAuthStatus('unauthenticated');
           setIsLoading(false);
         }
       }
+    };
+
+    // Subscribe to Firebase Authentication state transitions
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      await resolveAuthState(firebaseUser);
     });
+
+    // Safety timeout: Ensure initial restoration never hangs indefinitely (e.g. offline or Firebase blocked)
+    const safetyInitTimer = setTimeout(() => {
+      if (isMounted && authStatus === 'initializing') {
+        console.warn('[Auth] Startup auth initialization safety timeout (5000ms) reached. Resolving state.');
+        const token =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('sm_auth_token') || sessionStorage.getItem('sm_auth_token')
+            : null;
+        if (!token && !auth.currentUser) {
+          setCurrentUser(null);
+          setAuthStatus('unauthenticated');
+          setIsLoading(false);
+        }
+      }
+    }, 5000);
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyInitTimer);
       unsubscribeAuth();
     };
   }, []);
@@ -852,12 +930,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const retryAuth = useCallback(async () => {
+    setIsLoading(true);
+    setAuthStatus('initializing');
+    setAuthError(null);
+    try {
+      if (auth.currentUser) {
+        const officerProfile = await syncOfficerProfileFromFirestore(auth.currentUser);
+        setCurrentUser(officerProfile);
+        try {
+          localStorage.setItem('sm_cached_officer_user', JSON.stringify(officerProfile));
+        } catch (_) {}
+        setAuthStatus('authenticated');
+        setIsLoading(false);
+      } else {
+        const token =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('sm_auth_token') || sessionStorage.getItem('sm_auth_token')
+            : null;
+        if (token) {
+          const res = await fetch('/api/auth/me', {
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+              'x-auth-token': token,
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.user) {
+              setCurrentUser(data.user);
+              try {
+                localStorage.setItem('sm_cached_officer_user', JSON.stringify(data.user));
+              } catch (_) {}
+              setAuthStatus('authenticated');
+              setIsLoading(false);
+              return;
+            }
+          }
+        }
+        setCurrentUser(null);
+        setAuthStatus('unauthenticated');
+        setIsLoading(false);
+      }
+    } catch (err: any) {
+      console.warn('[Auth] retryAuth notice:', err);
+      setAuthStatus('error');
+      setAuthError(err?.message || 'Failed to reconnect to server.');
+      setIsLoading(false);
+    }
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
+        authStatus,
         currentUser,
         isLoading,
         authError,
+        retryAuth,
         isDark,
         toggleTheme,
         loginWithGoogle,
